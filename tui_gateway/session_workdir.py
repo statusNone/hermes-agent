@@ -208,7 +208,9 @@ def _session_cwd(session: dict | None) -> str:
 
 
 # Sources whose launch directory is an artifact of how the app was started, not a workspace the user picked.
-_LAUNCH_CWD_NOT_A_WORKSPACE = {"desktop"}
+# Highseat is a desktop-like remote client: its fallback cwd remains usable at runtime,
+# but it cannot identify a workspace unless the client explicitly validated one.
+_LAUNCH_CWD_NOT_A_WORKSPACE = {"desktop", "highseat"}
 
 
 def _context_cwd_is_launch_artifact(session: dict | None) -> bool:

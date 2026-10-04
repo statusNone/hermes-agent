@@ -83,3 +83,67 @@ def test_row_without_cwd_never_probes(monkeypatch, tmp_path):
 
     assert not db.get_session(key)["cwd"]
     assert probes == []
+
+
+def test_highseat_implicit_cwd_stays_runtime_only_and_keeps_its_source(
+    monkeypatch, tmp_path
+):
+    """A Highseat launch cwd executes tools but is not durable workspace identity."""
+    runtime_cwd = tmp_path / "runtime"
+    runtime_cwd.mkdir()
+    db = SessionDB(db_path=tmp_path / "state.db")
+    monkeypatch.setattr(server, "_get_db", lambda: db)
+    monkeypatch.setattr(server, "_resolve_model", lambda: "test-model")
+    monkeypatch.setattr(
+        server, "_completion_cwd", lambda _params=None: str(runtime_cwd)
+    )
+    monkeypatch.setattr(server, "_start_agent_build", lambda *a, **k: None)
+
+    resp = server.handle_request({
+        "id": "1",
+        "method": "session.create",
+        "params": {"cols": 80, "source": "highseat"},
+    })
+    sid = resp["result"]["session_id"]
+    key = resp["result"]["stored_session_id"]
+    try:
+        session = server._sessions[sid]
+        assert resp["result"]["info"]["cwd"] == str(runtime_cwd)
+        assert session["source"] == "highseat"
+        assert session["explicit_cwd"] is False
+        assert server._terminal_task_cwd(session) == str(runtime_cwd)
+        assert server._ensure_session_db_row(session) is True
+    finally:
+        server._sessions.pop(sid, None)
+
+    row = db.get_session(key)
+    assert row["source"] == "highseat"
+    assert row["cwd"] is None
+
+
+def test_highseat_explicit_cwd_is_durable_workspace(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    db = SessionDB(db_path=tmp_path / "state.db")
+    monkeypatch.setattr(server, "_get_db", lambda: db)
+    monkeypatch.setattr(server, "_resolve_model", lambda: "test-model")
+    monkeypatch.setattr(server, "_start_agent_build", lambda *a, **k: None)
+
+    resp = server.handle_request({
+        "id": "1",
+        "method": "session.create",
+        "params": {"cols": 80, "source": "highseat", "cwd": str(workspace)},
+    })
+    sid = resp["result"]["session_id"]
+    key = resp["result"]["stored_session_id"]
+    try:
+        session = server._sessions[sid]
+        assert session["source"] == "highseat"
+        assert session["explicit_cwd"] is True
+        assert server._ensure_session_db_row(session) is True
+    finally:
+        server._sessions.pop(sid, None)
+
+    row = db.get_session(key)
+    assert row["source"] == "highseat"
+    assert row["cwd"] == str(workspace)
