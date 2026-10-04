@@ -5,7 +5,13 @@ This root file holds only what applies everywhere. Each area has its own `AGENTS
 ~8k chars; `agent/subdirectory_hints.py` delivers up to 32k and truncates head/tail with a warning
 past that); see the **routing table** at the end and read the area file before editing in that area.
 
-**Never give up on the right solution.**
+**Deliver the smallest complete user-visible outcome, then stop.**
+
+## Product-first delivery rule
+
+The assigned observable workflow is the primary objective. Every change must advance a named acceptance step; infrastructure, abstraction, hardening, and proof work must identify the concrete current blocker they remove. Preserve the invariants and authority boundaries in this guide, but use verification proportional to the behavior and risk changed.
+
+Record unrelated robustness opportunities as follow-up and continue the feature. Do not create extra architecture, review, remediation, or evidence lanes without a demonstrated material risk or an acceptance step the current lane cannot safely own. A successful runnable or objectively inspectable workflow ends the milestone. Tests support that result; they are not a substitute for it. Do not expand the milestone without owner direction.
 
 ## What Hermes Is
 
