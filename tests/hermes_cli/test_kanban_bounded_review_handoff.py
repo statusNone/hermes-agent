@@ -107,6 +107,7 @@ def test_independent_review_tool_requires_exact_candidate_and_contract(kanban_ho
         "implementation_task_id": source, "reviewer": "reviewer", "candidate": "commit:abc",
     }))
     assert missing["ok"] is False
+    assert "review_contract" in missing["error"]
     created = json.loads(tools._handle_handoff_independent_review({
         "implementation_task_id": source, "reviewer": "reviewer", "candidate": "commit:abc",
         "review_contract": "Review commit:abc against the fix criteria.",

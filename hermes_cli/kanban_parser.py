@@ -349,7 +349,8 @@ _SPECS = [
     _cmd("reopen-review", [
         _TASK_IDS,
         _reason("Optional reason/note — recorded as a comment before reopening. Quote multi-word reasons."),
-    ], help="Send one or more review tasks back to their implementer for changes (not independent re-review)"),
+    ], help="Send one or more review tasks back to their implementer for changes (not independent re-review)",
+       description="Return review tasks to their implementer for changes. This is not the independent re-review path; use handoff-independent-review for a separately assigned reviewer card."),
     _cmd("handoff-independent-review", [
         _arg("implementation_task_id", help="Implementation/remediation card being reviewed"),
         _arg("--reviewer", required=True, help="Reviewer profile assigned atomically before dispatch"),

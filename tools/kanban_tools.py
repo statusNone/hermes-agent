@@ -150,7 +150,7 @@ def _persisted_identity() -> str:
     return current_profile_name("worker") or "worker"
 
 
-def _kanban_handler(tool_name: str) -> Callable:
+def _kanban_handler(tool_name: str, *, response_contract: bool = False) -> Callable:
     """Wrap a handler so every failure is a structured tool error. ``ValueError``
     (invalid board slug, DB validation such as cycle/self-link, ``AttachmentTooLarge``)
     is reported without a traceback; anything else is logged with ``logger.exception``."""
@@ -167,11 +167,16 @@ def _kanban_handler(tool_name: str) -> Callable:
                        f"Valid parameters: {', '.join(sorted(properties))}. Nothing changed.")
                 return fn(args, **kw)
             except _Reject as e:
+                if response_contract:
+                    return json.dumps({"ok": False, "error": json.loads(e.args[0])["error"]})
                 return e.args[0]
             except Exception as e:
                 if not isinstance(e, ValueError):
                     logger.exception(f"{tool_name} failed")
-                return tool_error(f"{tool_name}: {e}")
+                message = f"{tool_name}: {e}"
+                if response_contract:
+                    return json.dumps({"ok": False, "error": message})
+                return tool_error(message)
         return wrapper
     return deco
 
@@ -929,7 +934,7 @@ def _handle_request_changes(args: dict, **kw) -> str:
         return _ok_landed(kb, conn, tid, "ready", implementer=detail)
 
 
-@_kanban_handler("kanban_handoff_independent_review")
+@_kanban_handler("kanban_handoff_independent_review", response_contract=True)
 def _handle_handoff_independent_review(args: dict, **kw) -> str:
     """Create a separately assigned review card; this never reopens the source."""
     _reject_delegated_child_mutation("kanban_handoff_independent_review")
