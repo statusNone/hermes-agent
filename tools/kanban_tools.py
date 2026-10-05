@@ -23,7 +23,7 @@ from tools.kanban_tools_schemas import (
     KANBAN_ATTACH_SCHEMA,
     KANBAN_ATTACH_URL_SCHEMA, KANBAN_ATTACHMENTS_SCHEMA, KANBAN_BLOCK_SCHEMA, KANBAN_COMMENT_SCHEMA,
     KANBAN_COMPLETE_SCHEMA, KANBAN_CREATE_SCHEMA, KANBAN_HEARTBEAT_SCHEMA, KANBAN_LINK_SCHEMA,
-    KANBAN_LIST_SCHEMA, KANBAN_REQUEST_CHANGES_SCHEMA, KANBAN_REQUEST_REVIEW_SCHEMA,
+    KANBAN_HANDOFF_INDEPENDENT_REVIEW_SCHEMA, KANBAN_LIST_SCHEMA, KANBAN_REQUEST_CHANGES_SCHEMA, KANBAN_REQUEST_REVIEW_SCHEMA,
     KANBAN_SCHEDULE_SCHEMA, KANBAN_SHOW_SCHEMA, KANBAN_UNBLOCK_SCHEMA)
 
 logger = logging.getLogger(__name__)
@@ -150,7 +150,7 @@ def _persisted_identity() -> str:
     return current_profile_name("worker") or "worker"
 
 
-def _kanban_handler(tool_name: str) -> Callable:
+def _kanban_handler(tool_name: str, *, response_contract: bool = False) -> Callable:
     """Wrap a handler so every failure is a structured tool error. ``ValueError``
     (invalid board slug, DB validation such as cycle/self-link, ``AttachmentTooLarge``)
     is reported without a traceback; anything else is logged with ``logger.exception``."""
@@ -167,11 +167,16 @@ def _kanban_handler(tool_name: str) -> Callable:
                        f"Valid parameters: {', '.join(sorted(properties))}. Nothing changed.")
                 return fn(args, **kw)
             except _Reject as e:
+                if response_contract:
+                    return json.dumps({"ok": False, "error": json.loads(e.args[0])["error"]})
                 return e.args[0]
             except Exception as e:
                 if not isinstance(e, ValueError):
                     logger.exception(f"{tool_name} failed")
-                return tool_error(f"{tool_name}: {e}")
+                message = f"{tool_name}: {e}"
+                if response_contract:
+                    return json.dumps({"ok": False, "error": message})
+                return tool_error(message)
         return wrapper
     return deco
 
@@ -929,6 +934,29 @@ def _handle_request_changes(args: dict, **kw) -> str:
         return _ok_landed(kb, conn, tid, "ready", implementer=detail)
 
 
+@_kanban_handler("kanban_handoff_independent_review", response_contract=True)
+def _handle_handoff_independent_review(args: dict, **kw) -> str:
+    """Create a separately assigned review card; this never reopens the source."""
+    _reject_delegated_child_mutation("kanban_handoff_independent_review")
+    implementation_task_id = _require_text(args, "implementation_task_id")
+    reviewer = _require_text(args, "reviewer")
+    candidate = _redact(_require_text(args, "candidate"))
+    review_contract = _redact(_require_text(args, "review_contract"))
+    title = _redact_opt(args.get("title"))
+    from hermes_cli.profiles import list_profile_names, profile_exists
+
+    _check(profile_exists(reviewer),
+           f"reviewer profile {reviewer!r} is not installed. Installed profiles: "
+           f"{', '.join(list_profile_names())}")
+    with _board(args.get("board")) as (kb, conn):
+        review_id = kb.create_independent_review_task(
+            conn, implementation_task_id, reviewer=reviewer, candidate=candidate,
+            review_contract=review_contract, title=title,
+        )
+        return _ok(task_id=review_id, implementation_task_id=implementation_task_id,
+                   reviewer=reviewer, candidate=candidate, status="review")
+
+
 @_kanban_handler("kanban_heartbeat")
 def _handle_heartbeat(args: dict, **kw) -> str:
     """Signal liveness: extend the claim TTL AND record a heartbeat event.
@@ -1300,6 +1328,8 @@ _TOOLS = (
     ("kanban_schedule", KANBAN_SCHEDULE_SCHEMA, _handle_schedule, "⏰"),
     ("kanban_request_review", KANBAN_REQUEST_REVIEW_SCHEMA, _handle_request_review, "👀"),
     ("kanban_request_changes", KANBAN_REQUEST_CHANGES_SCHEMA, _handle_request_changes, "↩"),
+    ("kanban_handoff_independent_review", KANBAN_HANDOFF_INDEPENDENT_REVIEW_SCHEMA,
+     _handle_handoff_independent_review, "🔀"),
     ("kanban_heartbeat", KANBAN_HEARTBEAT_SCHEMA, _handle_heartbeat, "💓"),
     ("kanban_comment", KANBAN_COMMENT_SCHEMA, _handle_comment, "💬"),
     ("kanban_attach", KANBAN_ATTACH_SCHEMA, _handle_attach, "📎"),

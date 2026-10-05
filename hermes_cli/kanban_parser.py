@@ -166,6 +166,9 @@ _SPECS = [
                   "Mutually exclusive with --body."),
         _arg("--assignee", help="Profile name to assign"),
         _arg("--parent", action="append", default=[], help="Parent task id (repeatable)"),
+        _arg("--continuation-of", metavar="TASK_ID",
+             help="Declare this card a remediation/continuation of a finding. It inherits the "
+                  "finding's block-loop state; a tripped lineage stays in triage."),
         _arg("--workspace",
              help="scratch | worktree | worktree:<path> | dir:<path> (default: scratch; "
                   "an explicit 'scratch' also opts out of a project-scoped board's project)"),
@@ -346,7 +349,15 @@ _SPECS = [
     _cmd("reopen-review", [
         _TASK_IDS,
         _reason("Optional reason/note — recorded as a comment before reopening. Quote multi-word reasons."),
-    ], help="Send one or more review tasks back for changes (review -> ready/todo)"),
+    ], help="Send one or more review tasks back to their implementer for changes (not independent re-review)",
+       description="Return review tasks to their implementer for changes. This is not the independent re-review path; use handoff-independent-review for a separately assigned reviewer card."),
+    _cmd("handoff-independent-review", [
+        _arg("implementation_task_id", help="Implementation/remediation card being reviewed"),
+        _arg("--reviewer", required=True, help="Reviewer profile assigned atomically before dispatch"),
+        _arg("--candidate", required=True, help="Exact candidate identity (commit, PR, artifact version, etc.)"),
+        _arg("--review-contract", required=True, help="Current acceptance contract for this exact candidate"),
+        _arg("--title", help="Optional independent review card title"),
+    ], help="Create a separately assigned independent review card for an exact candidate"),
     _cmd("promote", [
         _TASK_ID,
         _arg("reason", nargs="*", help="Audit-trail reason (recorded on the task_events row)"),

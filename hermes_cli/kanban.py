@@ -373,6 +373,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             goal_mode=bool(getattr(args, "goal_mode", False)),
             goal_max_turns=getattr(args, "goal_max_turns", None),
             completion_contract=getattr(args, "completion_contract", None),
+            continuation_of_task_id=getattr(args, "continuation_of", None),
             initial_status=getattr(args, "initial_status", "running"),
             creator_task_id=(os.environ.get("HERMES_KANBAN_TASK")
                              if is_dispatcher_owned_worker_context() else None),
@@ -1087,6 +1088,22 @@ def _cmd_reopen_review(args: argparse.Namespace) -> int:
                            lambda tid: f"cannot reopen {tid} (not in review?)")
 
 
+def _cmd_handoff_independent_review(args: argparse.Namespace) -> int:
+    from hermes_cli.profiles import list_profile_names, profile_exists
+
+    if not profile_exists(args.reviewer):
+        return _err(
+            f"reviewer profile {args.reviewer!r} is not installed. Installed profiles: "
+            f"{', '.join(list_profile_names())}")
+    with kbc.connect_closing() as conn:
+        review_id = kb.create_independent_review_task(
+            conn, args.implementation_task_id, reviewer=args.reviewer,
+            candidate=args.candidate, review_contract=args.review_contract, title=args.title,
+        )
+    print(f"Created independent review {review_id} for {args.implementation_task_id}")
+    return 0
+
+
 def _cmd_promote(args: argparse.Namespace) -> int:
     reason = _joined_words(args.reason)
     author = _profile_author()
@@ -1328,7 +1345,8 @@ _HANDLERS = {
     "complete": _cmd_complete, "edit": _cmd_edit, "block": _cmd_block,
     "schedule": _cmd_schedule, "unblock": _cmd_unblock,
     "request-review": _cmd_request_review, "request-changes": _cmd_request_changes,
-    "reopen-review": _cmd_reopen_review, "promote": _cmd_promote,
+    "reopen-review": _cmd_reopen_review, "handoff-independent-review": _cmd_handoff_independent_review,
+    "promote": _cmd_promote,
     "archive": _cmd_archive, "tail": _cmd_tail, "dispatch": _cmd_dispatch,
     "daemon": _cmd_daemon, "watch": _cmd_watch, "stats": _cmd_stats,
     "log": _cmd_log, "runs": _cmd_runs, "heartbeat": _cmd_heartbeat,

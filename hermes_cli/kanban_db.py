@@ -810,6 +810,15 @@ class Task:
     block_kind: Optional[str] = None
     block_recurrences: int = 0               # unblock-loop counter, see BLOCK_RECURRENCE_LIMIT
     completion_contract: Optional[str] = None
+    # Explicit finding lineage for successor/remediation cards.  NULL is a
+    # legacy card with no declared continuation relationship.
+    finding_lineage_id: Optional[str] = None
+    continuation_of_task_id: Optional[str] = None
+    # Independent review cards do not inherit implementation prose: these name
+    # the reviewed implementation and its exact current review target instead.
+    review_of_task_id: Optional[str] = None
+    review_candidate: Optional[str] = None
+    review_contract: Optional[str] = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Task":
@@ -844,6 +853,8 @@ _TASK_OPTIONAL_COLUMNS = (
 # Text columns where "" is stored/read as "not set".
 _TASK_EMPTY_IS_NULL_COLUMNS = (
     "model_override", "provider_override", "reasoning_effort", "goal_max_turns", "block_kind",
+    "finding_lineage_id", "continuation_of_task_id", "review_of_task_id", "review_candidate",
+    "review_contract",
 )
 
 
@@ -1044,7 +1055,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- ``blocked`` so a cron can't spin it forever. Reset to 0 only on a
     -- successful completion — NOT on unblock (resetting on unblock is exactly
     -- the amnesia that let the loop run unbounded).
-    block_recurrences    INTEGER NOT NULL DEFAULT 0
+    block_recurrences    INTEGER NOT NULL DEFAULT 0,
+    -- Explicit continuation identity; a successor inherits its declared
+    -- finding's recurrence state instead of starting a new breaker counter.
+    finding_lineage_id   TEXT,
+    continuation_of_task_id TEXT,
+    -- Immutable provenance and exact contract for a separately dispatched
+    -- independent review card.  These deliberately do not reuse task.body.
+    review_of_task_id    TEXT,
+    review_candidate     TEXT,
+    review_contract      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_links (
@@ -1322,182 +1342,6 @@ def _normalize_task_skills(skills: Optional[Iterable[str]]) -> Optional[list[str
             "capabilities (e.g. `web`, `browser`, `terminal`)."
         )
     return cleaned
-
-
-def create_task(
-    conn: sqlite3.Connection, *, title: str, body: Optional[str] = None,
-    assignee: Optional[str] = None, created_by: Optional[str] = None,
-    workspace_kind: Optional[str] = None, workspace_path: Optional[str] = None,
-    branch_name: Optional[str] = None, tenant: Optional[str] = None, priority: int = 0,
-    parents: Iterable[str] = (), triage: bool = False, idempotency_key: Optional[str] = None,
-    max_runtime_seconds: Optional[int] = None, skills: Optional[Iterable[str]] = None,
-    max_retries: Optional[int] = None, model_override: Optional[str] = None,
-    provider_override: Optional[str] = None, reasoning_effort: Optional[str] = None,
-    goal_mode: bool = False, goal_max_turns: Optional[int] = None, initial_status: str = "running",
-    session_id: Optional[str] = None, board: Optional[str] = None, project_id: Optional[str] = None,
-    project_source_task_id: Optional[str] = None,
-    creator_task_id: Optional[str] = None,
-    completion_contract: Optional[str] = None,
-) -> str:
-    """Create a task (optionally under ``parents``); returns its id.
-
-    Status: ``ready`` unless a parent is not ``done`` (``todo``); ``triage=True``
-    forces ``triage``; ``initial_status="blocked"`` parks it for human ops.
-    ``idempotency_key``: an existing non-archived task with the key is returned
-    instead of a duplicate. ``max_runtime_seconds``: cap before the dispatcher
-    SIGTERMs and re-queues. ``model_override``/``provider_override`` pin the
-    worker model (provider requires model); ``reasoning_effort`` is independent.
-    ``creator_task_id``: inherit durable session/subscriptions independently of
-    dependency edges; an explicit ``session_id`` still wins.
-    ``project_source_task_id``: cross-profile fallback when ``project_id`` is not
-    in the active profile's projects.db — see ``_resolve_project_link``.
-    ``workspace_kind=None`` (omitted) inherits a project-scoped board's project;
-    an explicit ``"scratch"`` or ``project_id=""`` is a request for no project.
-    """
-    from hermes_cli.kanban_db_graph import initial_task_state, inherit_creator_origin
-    from hermes_cli.kanban_pr_acceptance import validate_contract
-
-    completion_contract = validate_contract(completion_contract)
-    model_override, provider_override = _validate_model_override(model_override, provider_override)
-    reasoning_effort = normalize_reasoning_effort(reasoning_effort)
-    assignee = _canonical_assignee(assignee)
-    if not title or not title.strip():
-        raise ValueError("title is required")
-    if initial_status not in VALID_INITIAL_STATUSES:
-        raise ValueError(f"initial_status must be one of {sorted(VALID_INITIAL_STATUSES)}")
-    # A project-scoped board anchors every new task to its project's repo
-    # (deterministic worktree + branch) without each surface repeating it.
-    # An explicit ``scratch`` (or ``project_id=""``) is a request for no project:
-    # it must not be upgraded to a worktree in the board's repo (#106342).
-    if project_id is None and workspace_kind != "scratch":
-        try:
-            project_id = (_board_meta_for(board).get("project_id") or "").strip() or None
-        except Exception:
-            pass
-    if workspace_kind is None:
-        workspace_kind = "scratch"
-    if workspace_kind not in VALID_WORKSPACE_KINDS:
-        raise ValueError(
-            f"workspace_kind must be one of {sorted(VALID_WORKSPACE_KINDS)}, "
-            f"got {workspace_kind!r}"
-        )
-    if branch_name is not None:
-        branch_name = str(branch_name).strip() or None
-    if branch_name and workspace_kind != "worktree":
-        raise ValueError("branch_name is only valid for worktree workspaces")
-
-    project_id, project_obj, project_repo, workspace_kind = _resolve_project_link(
-        conn, project_id, project_source_task_id, workspace_kind, workspace_path
-    )
-    parents = tuple(p for p in parents if p)
-    skills_list = _normalize_task_skills(skills)
-
-    # Idempotency check BEFORE the write txn (no lock held); a concurrent-create
-    # race may insert twice, the next lookup stabilises on the newest.
-    if idempotency_key:
-        row = conn.execute(
-            "SELECT id FROM tasks WHERE idempotency_key = ? "
-            "AND status != 'archived' "
-            "ORDER BY created_at DESC LIMIT 1", (idempotency_key,),
-        ).fetchone()
-        if row:
-            return row["id"]
-
-    now = int(time.time())
-
-    # Only persistent kinds inherit the board ``default_workdir``: a scratch
-    # task inheriting it would point cleanup at the user's source tree.
-    if workspace_path is None and project_repo is None and workspace_kind in {"dir", "worktree"}:
-        board_default = _board_meta_for(board).get("default_workdir")
-        if board_default:
-            workspace_path = str(board_default)
-
-    # Retry once on the extremely unlikely id collision.
-    for attempt in range(2):
-        task_id = _new_task_id()
-        try:
-            # allow_nested: graph builders compose create_task under one outer
-            # commit so the dispatcher never sees a half-built graph.
-            with write_txn(conn, allow_nested=True):
-                task_status, tenant = initial_task_state(conn, parents, initial_status, triage, tenant)
-                # Project worktree: fresh dir under the repo + deterministic
-                # branch, instead of the random ``wt/<id>`` worker fallback.
-                if project_obj is not None and workspace_kind == "worktree":
-                    if project_repo and not workspace_path:
-                        workspace_path = os.path.join(project_repo, ".worktrees", task_id)
-                    if not branch_name:
-                        branch_name = _project_branch_name(project_obj, task_id, title)
-
-                conn.execute(
-                    """
-                    INSERT INTO tasks (
-                        id, title, body, assignee, status, priority,
-                        created_by, created_at, workspace_kind, workspace_path,
-                        branch_name, project_id, tenant, idempotency_key,
-                        max_runtime_seconds,
-                        skills, max_retries, model_override, provider_override,
-                        reasoning_effort,
-                        goal_mode, goal_max_turns, session_id, completion_contract
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        task_id, title.strip(), body, assignee, task_status, priority,
-                        created_by, now, workspace_kind, workspace_path,
-                        branch_name, project_id, tenant, idempotency_key,
-                        _opt_int(max_runtime_seconds),
-                        json.dumps(skills_list) if skills_list is not None else None,
-                        _opt_int(max_retries), model_override, provider_override, reasoning_effort,
-                        1 if goal_mode else 0, _opt_int(goal_max_turns), session_id, completion_contract,
-                    ),
-                )
-                for pid in parents:
-                    _link(conn, pid, task_id)
-                _append_event(
-                    conn,
-                    task_id,
-                    "created",
-                    {
-                        "assignee": assignee,
-                        "status": task_status,
-                        "parents": list(parents),
-                        "creator_task_id": creator_task_id,
-                        "tenant": tenant,
-                        "workspace_kind": workspace_kind,
-                        "workspace_path": workspace_path,
-                        "branch_name": branch_name,
-                        "project_id": project_id,
-                        "skills": list(skills_list) if skills_list else None,
-                        "goal_mode": bool(goal_mode) or None,
-                        "model_override": model_override,
-                        "provider_override": provider_override,
-                    },
-                )
-                if task_status == "blocked":
-                    _append_event(
-                        conn,
-                        task_id,
-                        "blocked",
-                        {"reason": "initial_status", "status": "blocked", "actor": created_by or "user"},
-                    )
-                if task_status == "todo":
-                    # Parked behind an open parent: record why, exactly as
-                    # link_tasks does, so the board never shows an unexplained todo.
-                    gating = [p for p in parents if _task_status(conn, p) not in ("done", "archived")]
-                    if gating:
-                        _append_event(
-                            conn,
-                            task_id,
-                            "dependency_wait",
-                            {"reason": "parent_not_done", "parent": gating[0]},
-                        )
-                # ACK-edge: the originating channel hears a child BLOCK, not just the fan-in.
-                inherit_creator_origin(conn, task_id, creator_task_id, created_at=now)
-                _inherit_notify_subs(conn, task_id, parents, created_at=now)
-            return task_id
-        except sqlite3.IntegrityError:
-            if attempt == 1:
-                raise
-    raise RuntimeError("unreachable")
 
 
 def _board_meta_for(board: Optional[str]) -> dict:
@@ -3423,6 +3267,68 @@ def redact_review_value(value: Any) -> Any:
     return value
 
 
+def create_independent_review_task(
+    conn: sqlite3.Connection, implementation_task_id: str, *, reviewer: str,
+    candidate: str, review_contract: str, title: Optional[str] = None,
+) -> str:
+    """Atomically create a separately-routed review card for one exact candidate.
+
+    This is intentionally not :func:`reopen_review_task`: reopening returns an
+    existing card to its implementer.  The new card is born in ``review`` with
+    its reviewer assignment and explicit source/candidate/contract in the same
+    transaction, so the dispatcher cannot observe an unassigned successor or
+    infer stale implementation prose as its review goal.
+    """
+    implementation_task_id = _nonblank_str(implementation_task_id)
+    reviewer = _canonical_assignee(_nonblank_str(reviewer))
+    candidate = _nonblank_str(candidate)
+    review_contract = _nonblank_str(review_contract)
+    if not implementation_task_id:
+        raise ValueError("implementation_task_id is required")
+    if not reviewer:
+        raise ValueError("reviewer is required")
+    if not candidate:
+        raise ValueError("candidate is required")
+    if not review_contract:
+        raise ValueError("review_contract is required")
+    assert implementation_task_id is not None and reviewer is not None
+    assert candidate is not None and review_contract is not None
+    now = int(time.time())
+    with write_txn(conn):
+        source = conn.execute(
+            "SELECT id, tenant, project_id FROM tasks WHERE id = ?",
+            (implementation_task_id,),
+        ).fetchone()
+        if source is None:
+            raise ValueError(f"implementation task not found: {implementation_task_id}")
+        review_id = _new_task_id()
+        review_title = _nonblank_str(title) or f"Independent review: {candidate}"
+        body = f"Exact candidate: {candidate}\n\nReview contract:\n{review_contract}"
+        conn.execute(
+            """
+            INSERT INTO tasks (
+                id, title, body, assignee, status, priority, created_at,
+                workspace_kind, tenant, project_id, review_of_task_id,
+                review_candidate, review_contract
+            ) VALUES (?, ?, ?, ?, 'review', 0, ?, 'scratch', ?, ?, ?, ?, ?)
+            """,
+            (review_id, review_title, body, reviewer, now, source["tenant"], source["project_id"],
+             implementation_task_id, candidate, review_contract),
+        )
+        payload = {
+            "assignee": reviewer, "status": "review", "review_of_task_id": implementation_task_id,
+            "candidate": candidate, "review_contract": review_contract,
+        }
+        _append_event(conn, review_id, "created", payload)
+        _append_event(conn, review_id, "independent_review_created", payload)
+        _append_event(conn, implementation_task_id, "independent_review_handed_off", {
+            "review_task_id": review_id, "reviewer": reviewer, "candidate": candidate,
+            "review_contract": review_contract,
+        })
+        _inherit_notify_subs(conn, review_id, (implementation_task_id,), created_at=now)
+    return review_id
+
+
 def request_review(
     conn: sqlite3.Connection, task_id: str, *, summary: Optional[str] = None,
     metadata: Optional[dict] = None, reviewer: Optional[str] = None,
@@ -4564,6 +4470,7 @@ from hermes_cli.kanban_db_connect import (  # noqa: E402
     init_db,
     write_txn,
 )
+from hermes_cli.kanban_db_task_creation import create_task  # noqa: E402
 from hermes_cli.kanban_db_workspace import (  # noqa: E402
     _cleanup_workspace,
     _is_managed_scratch_path,

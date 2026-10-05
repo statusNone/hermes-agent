@@ -835,6 +835,11 @@ _LATER_TASK_COLUMNS = (
     # Typed block reason (VALID_BLOCK_KINDS); NULL = generic human blocker.
     ("block_kind", "block_kind TEXT"),
     ("block_recurrences", "block_recurrences INTEGER NOT NULL DEFAULT 0"),
+    ("finding_lineage_id", "finding_lineage_id TEXT"),
+    ("continuation_of_task_id", "continuation_of_task_id TEXT"),
+    ("review_of_task_id", "review_of_task_id TEXT"),
+    ("review_candidate", "review_candidate TEXT"),
+    ("review_contract", "review_contract TEXT"),
     # Spawn-time start fingerprint of worker_pid (PID-reuse guard; NULL = legacy row).
     ("worker_started_at", "worker_started_at INTEGER"),
 )
@@ -902,6 +907,7 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_tenant ON tasks(tenant)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_idempotency ON tasks(idempotency_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_finding_lineage ON tasks(finding_lineage_id)")
 
     # task_events.run_id back-fills as NULL for historical events (they predate
     # runs and can't be attributed).
