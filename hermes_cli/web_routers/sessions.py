@@ -8,6 +8,7 @@ helpers are reached via the late-binding seam so monkeypatching keeps working.
 
 import asyncio
 import json
+import os
 import re
 import sqlite3
 import time
@@ -135,6 +136,14 @@ def _is_active(row: dict, now: float) -> bool:
         and (now - row.get("last_active", row.get("started_at", 0))) < _ACTIVE_WINDOW_S)
 
 
+def _normalized_exact_cwd(cwd: str) -> str:
+    """Normalize the absolute CWD identity exactly as session creation does."""
+    raw = cwd.strip()
+    if not raw or not os.path.isabs(raw):
+        raise HTTPException(status_code=400, detail="cwd_exact must be an absolute path")
+    return os.path.abspath(os.path.expanduser(raw))
+
+
 def _with_db(profile: Optional[str], fn: Callable, *, read_only: bool):
     """Open the profile's session DB, run ``fn(db)``, always close."""
     db = _open_session_db_for_profile(profile, read_only=read_only)
@@ -178,7 +187,8 @@ def _resolve_session_id(db, session_id: str) -> Optional[str]:
 def get_sessions(
     limit: int = Query(20, ge=0, le=100), offset: int = Query(0, ge=0), min_messages: int = 0,
     archived: str = "exclude", order: str = "created", source: str = None, sources: str = None,
-    exclude_sources: str = None, cwd_prefix: str = None, full: bool = False,
+    exclude_sources: str = None, cwd_prefix: str = None, cwd_exact: Optional[str] = None,
+    projectless: bool = False, include_pinned: bool = True, full: bool = False,
     profile: Optional[str] = None):
     """List sessions.
 
@@ -191,6 +201,10 @@ def get_sessions(
             status_code=400, detail="archived must be one of: exclude, only, include")
     if order not in ("created", "recent"):
         raise HTTPException(status_code=400, detail="order must be one of: created, recent")
+    scopes = [cwd_prefix is not None, cwd_exact is not None, projectless]
+    if sum(scopes) > 1:
+        raise HTTPException(status_code=400, detail="only one CWD scope may be requested")
+    normalized_exact_cwd = _normalized_exact_cwd(cwd_exact) if cwd_exact is not None else None
     profile_name = _cron_profile_home(profile)[0] if profile else None
     try:
         # Auto-archive is the only write on this GET path: run it on its own
@@ -210,6 +224,7 @@ def get_sessions(
             scope = dict(
                 source=source or None, sources=source_list or None,
                 exclude_sources=exclude_list or None, cwd_prefix=(cwd_prefix or None),
+                cwd_exact=normalized_exact_cwd, projectless=projectless,
                 min_message_count=min_message_count, include_archived=include_archived,
                 archived_only=archived_only, include_subagents=include_subagents)
             sessions = db.list_sessions_rich(
@@ -219,7 +234,7 @@ def get_sessions(
                 # Skip the system_prompt blob inside SQLite too (pairs with
                 # _strip_session_list_rows below).
                 compact_rows=not full,
-                include_pinned=True,
+                include_pinned=include_pinned,
                 **scope)
             total = db.session_count(exclude_children=True, **scope)
             now = time.time()

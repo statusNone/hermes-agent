@@ -92,6 +92,59 @@ def _cwd_prefix_clause(cwd_prefix: str) -> Tuple[str, List[str]]:
     )
 
 
+def _cwd_exact_clause(cwd_exact: str) -> Tuple[str, List[str]]:
+    return "s.cwd = ?", [cwd_exact]
+
+
+def _projected_cwd_scope_clause(*, cwd_exact: Optional[str] = None) -> Tuple[str, List[str]]:
+    """Scope a listable root by its surfaced compression tip's CWD.
+
+    ``list_sessions_rich`` replaces a compression root's display fields with the
+    tip. Exact and projectless selection must therefore follow the same preferred
+    continuation walk before the root is ordered, paged, or counted.
+    """
+    tip_id = f"""COALESCE((
+        WITH RECURSIVE compression_chain(id, depth) AS (
+            SELECT s.id, 0
+            UNION ALL
+            SELECT (
+                SELECT child.id
+                FROM sessions parent
+                JOIN sessions child ON child.parent_session_id = parent.id
+                WHERE parent.id = compression_chain.id
+                  AND parent.end_reason = 'compression'
+                  AND {_sql_json_extract('child.model_config', '$._branched_from')} IS NULL
+                  AND {_sql_json_extract('child.model_config', '$._delegate_from')} IS NULL
+                  AND NOT ({_RESET_CHILD_SQL.format(a='child')})
+                  AND COALESCE(child.source, '') != 'tool'
+                ORDER BY
+                    CASE
+                        WHEN child.end_reason = 'compression' THEN 0
+                        WHEN child.ended_at IS NULL THEN 1
+                        ELSE 2
+                    END,
+                    {_sql_session_last_active('child')} DESC,
+                    child.started_at DESC,
+                    child.id DESC
+                LIMIT 1
+            ), depth + 1
+            FROM compression_chain
+            WHERE id IS NOT NULL AND depth < 1000
+        )
+        SELECT id FROM compression_chain
+        WHERE id IS NOT NULL
+        ORDER BY depth DESC
+        LIMIT 1
+    ), s.id)"""
+    if cwd_exact:
+        return f"EXISTS (SELECT 1 FROM sessions tip WHERE tip.id = {tip_id} AND tip.cwd = ?)", [cwd_exact]
+    return (
+        f"EXISTS (SELECT 1 FROM sessions tip WHERE tip.id = {tip_id} "
+        "AND COALESCE(tip.cwd, '') = '')",
+        [],
+    )
+
+
 def _workspace_key_clause(key: str) -> Tuple[str, List[str]]:
     """WHERE for ``workspace_key(row) == key``: git_repo_root equals ``key``, or (rows predating
     per-session git metadata) cwd is at/under ``key``."""
@@ -121,8 +174,9 @@ def _where_sql(clauses: List[str], lead: str = "") -> str:
 
 
 def _session_filter_where(
-    *, exclude_children: bool = False, source: str = None, sources: List[str] = None,
-    session_key: str = None, exclude_sources: List[str] = None, cwd_prefix: str = None,
+    *, exclude_children: bool = False, source: Optional[str] = None, sources: Optional[List[str]] = None,
+    session_key: Optional[str] = None, exclude_sources: Optional[List[str]] = None, cwd_prefix: Optional[str] = None,
+    cwd_exact: Optional[str] = None, projectless: bool = False, projected_cwd_scope: bool = False,
     min_message_count: int = 0, archived_only: bool = False, include_archived: bool = False,
     include_subagents: bool = False,
 ) -> Tuple[List[str], List[Any]]:
@@ -145,16 +199,30 @@ def _session_filter_where(
     # legacy heuristic (parent ended with 'branched' before the child started), covering branch sessions
     # created before the marker existed.
     include_sources = [source] if source else list(sources or [])
+    cwd_scope = (
+        _projected_cwd_scope_clause(cwd_exact=cwd_exact)
+        if projected_cwd_scope and (cwd_exact or projectless)
+        else (_cwd_exact_clause(cwd_exact) if cwd_exact else ("", []))
+    )
     for clause, values in (
         (f"s.source IN ({_session_ids_placeholders(include_sources)})", include_sources),
         ("s.session_key = ?", [session_key] if session_key else []),
         (f"s.source NOT IN ({_session_ids_placeholders(exclude_sources or ())})", exclude_sources or []),
         (_cwd_prefix_clause(cwd_prefix) if cwd_prefix else ("", [])),
-        ("s.message_count >= ?", [min_message_count] if min_message_count > 0 else []),
     ):
         if values:
             where.append(clause)
             params.extend(values)
+    scope_clause, scope_params = cwd_scope
+    if scope_clause:
+        where.append(scope_clause)
+        params.extend(scope_params)
+    if min_message_count > 0:
+        where.append("s.message_count >= ?")
+        params.append(min_message_count)
+    if projectless and not projected_cwd_scope:
+        # Current rows use NULL; imported legacy rows can retain an empty string.
+        where.append("COALESCE(s.cwd, '') = ''")
     if archived_only:
         where.append("s.archived = 1")
     elif not include_archived:
@@ -1316,7 +1384,8 @@ class SessionSessionsMixin:
 
     def list_sessions_rich(
         self, source: str = None, sources: List[str] = None, exclude_sources: List[str] = None,
-        cwd_prefix: str = None, limit: int = 20, offset: int = 0, include_children: bool = False,
+        cwd_prefix: Optional[str] = None, cwd_exact: Optional[str] = None, projectless: bool = False,
+        limit: int = 20, offset: int = 0, include_children: bool = False,
         min_message_count: int = 0, project_compression_tips: bool = True,
         order_by_last_active: bool = False, include_archived: bool = False, archived_only: bool = False,
         id_query: str = None, search_query: str = None, compact_rows: bool = False,
@@ -1331,7 +1400,9 @@ class SessionSessionsMixin:
         self.flush_token_counts()  # rows carry token/cost totals
         where_clauses, params = _session_filter_where(
             exclude_children=not include_children, source=source, sources=sources, session_key=session_key,
-            exclude_sources=exclude_sources, cwd_prefix=cwd_prefix, min_message_count=min_message_count,
+            exclude_sources=exclude_sources, cwd_prefix=cwd_prefix, cwd_exact=cwd_exact, projectless=projectless,
+            projected_cwd_scope=project_compression_tips and not include_children,
+            min_message_count=min_message_count,
             archived_only=archived_only, include_archived=include_archived, include_subagents=include_subagents,
         )
         # The archived-only view is the recovery surface for rows that dropped out of every
@@ -1409,6 +1480,8 @@ class SessionSessionsMixin:
             pinned_clauses, pinned_params = _session_filter_where(
                 exclude_children=not include_children, source=source, sources=sources,
                 session_key=session_key, exclude_sources=exclude_sources, cwd_prefix=cwd_prefix,
+                cwd_exact=cwd_exact, projectless=projectless,
+                projected_cwd_scope=project_compression_tips and not include_children,
                 min_message_count=min_message_count, archived_only=False, include_archived=True,
                 include_subagents=include_subagents,
             )
@@ -1531,14 +1604,16 @@ class SessionSessionsMixin:
         )]
 
     def session_count(
-        self, source: str = None, sources: List[str] = None, cwd_prefix: str = None,
+        self, source: str = None, sources: List[str] = None, cwd_prefix: Optional[str] = None,
+        cwd_exact: Optional[str] = None, projectless: bool = False,
         min_message_count: int = 0, include_archived: bool = False, archived_only: bool = False,
         exclude_children: bool = False, exclude_sources: List[str] = None, include_subagents: bool = False,
     ) -> int:
         """Count sessions with list_sessions_rich's filters so a paired "load more" total matches."""
         where_clauses, params = _session_filter_where(
             exclude_children=exclude_children, source=source, sources=sources,
-            exclude_sources=exclude_sources, cwd_prefix=cwd_prefix, min_message_count=min_message_count,
+            exclude_sources=exclude_sources, cwd_prefix=cwd_prefix, cwd_exact=cwd_exact, projectless=projectless,
+            projected_cwd_scope=exclude_children, min_message_count=min_message_count,
             archived_only=archived_only, include_archived=include_archived, include_subagents=include_subagents,
         )
         return self._read_one(f"SELECT COUNT(*) FROM sessions s{_where_sql(where_clauses, ' ')}", params)[0]

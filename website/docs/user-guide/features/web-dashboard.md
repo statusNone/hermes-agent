@@ -492,7 +492,7 @@ Directories a fresh Chat-tab session may start in: the profile's projects (with 
 
 ### GET /api/sessions
 
-Returns the 20 most recent sessions with metadata (model, token counts, timestamps, preview).
+Returns the 20 most recent sessions with metadata (model, token counts, timestamps, preview). `cwd_prefix` retains its descendant-inclusive behavior. Use exactly one of `cwd_prefix`, `cwd_exact` (an absolute normalized workspace path, exact match only), or `projectless=true` (rows whose surfaced workspace is absent). `include_pinned` defaults to `true`; set it to `false` when the page must contain no more than `limit` rows.
 
 ### GET /api/config
 

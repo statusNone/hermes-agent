@@ -383,6 +383,33 @@ class TestWebServerEndpoints:
         assert response.json()["sessions"] == []
         assert response.json()["total"] == 0
 
+    def test_get_sessions_include_pinned_false_keeps_page_bounded(self):
+        from hermes_constants import get_hermes_home
+        from hermes_state import SessionDB
+
+        db = SessionDB(db_path=get_hermes_home() / "state.db")
+        try:
+            for index in range(11):
+                session_id = f"page-{index}"
+                db.create_session(session_id, source="cli")
+                db.append_message(session_id, role="user", content=session_id)
+            db.set_session_pinned("page-0", True)
+        finally:
+            db.close()
+
+        first = self.client.get("/api/sessions?limit=10&include_pinned=false")
+        second = self.client.get("/api/sessions?limit=10&offset=10&include_pinned=false")
+
+        assert first.status_code == second.status_code == 200
+        first_payload = first.json()
+        second_payload = second.json()
+        assert set(first_payload) >= {"sessions", "total", "limit", "offset"}
+        assert first_payload["limit"] == 10
+        assert first_payload["total"] == 11
+        assert len(first_payload["sessions"]) == 10
+        assert all(not row["pinned"] for row in first_payload["sessions"])
+        assert [row["id"] for row in second_payload["sessions"]] == ["page-0"]
+
     @pytest.mark.parametrize(
         "missing_column", ["archived", "pinned", "last_activity_at"]
     )
