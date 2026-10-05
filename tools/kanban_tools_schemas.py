@@ -295,6 +295,25 @@ KANBAN_REQUEST_CHANGES_SCHEMA = _schema(
     ["reason"],
 )
 
+KANBAN_HANDOFF_INDEPENDENT_REVIEW_SCHEMA = _schema(
+    "kanban_handoff_independent_review",
+    (
+        "Create a separate independent review card for an exact successor candidate. "
+        "The reviewer is assigned atomically before the new review card can dispatch, "
+        "and the new card records the implementation/remediation source plus the current "
+        "review contract. Do NOT use reopen-review for this: reopen-review sends an existing "
+        "review card back to its implementer for changes."
+    ),
+    {
+        "implementation_task_id": _prop("string", "Existing implementation or remediation card being reviewed."),
+        "reviewer": _prop("string", "Installed reviewer profile assigned to the new card."),
+        "candidate": _prop("string", "Exact candidate identity: commit, PR, artifact version, or equivalent."),
+        "review_contract": _prop("string", "Current acceptance/review contract for this exact candidate."),
+        "title": _prop("string", "Optional independent review card title."),
+    },
+    ["implementation_task_id", "reviewer", "candidate", "review_contract"],
+)
+
 KANBAN_HEARTBEAT_SCHEMA = _schema(
     "kanban_heartbeat",
     (

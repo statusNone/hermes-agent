@@ -108,11 +108,13 @@ def test_review_tools_are_gated_and_visible_to_kanban_workers(
     }
     assert "kanban_request_review" in names
     assert "kanban_request_changes" in names
+    assert "kanban_handoff_independent_review" in names
 
     from agent.transports.hermes_tools_mcp_server import EXPOSED_TOOLS
 
     assert "kanban_request_changes" in EXPOSED_TOOLS
-    assert "kanban_request_changes" in resolve_toolset("kanban")
+    assert "kanban_handoff_independent_review" in EXPOSED_TOOLS
+    assert "kanban_handoff_independent_review" in resolve_toolset("kanban")
 
 
 

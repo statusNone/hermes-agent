@@ -810,6 +810,15 @@ class Task:
     block_kind: Optional[str] = None
     block_recurrences: int = 0               # unblock-loop counter, see BLOCK_RECURRENCE_LIMIT
     completion_contract: Optional[str] = None
+    # Explicit finding lineage for successor/remediation cards.  NULL is a
+    # legacy card with no declared continuation relationship.
+    finding_lineage_id: Optional[str] = None
+    continuation_of_task_id: Optional[str] = None
+    # Independent review cards do not inherit implementation prose: these name
+    # the reviewed implementation and its exact current review target instead.
+    review_of_task_id: Optional[str] = None
+    review_candidate: Optional[str] = None
+    review_contract: Optional[str] = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Task":
@@ -840,10 +849,14 @@ _TASK_OPTIONAL_COLUMNS = (
     "branch_name", "project_id", "tenant", "result", "idempotency_key", "worker_pid",
     "max_runtime_seconds", "last_heartbeat_at", "current_run_id", "workflow_template_id",
     "current_step_key", "max_retries", "session_id", "completion_contract",
+    "finding_lineage_id", "continuation_of_task_id", "review_of_task_id",
+    "review_candidate", "review_contract",
 )
 # Text columns where "" is stored/read as "not set".
 _TASK_EMPTY_IS_NULL_COLUMNS = (
     "model_override", "provider_override", "reasoning_effort", "goal_max_turns", "block_kind",
+    "finding_lineage_id", "continuation_of_task_id", "review_of_task_id", "review_candidate",
+    "review_contract",
 )
 
 
@@ -1044,7 +1057,16 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- ``blocked`` so a cron can't spin it forever. Reset to 0 only on a
     -- successful completion — NOT on unblock (resetting on unblock is exactly
     -- the amnesia that let the loop run unbounded).
-    block_recurrences    INTEGER NOT NULL DEFAULT 0
+    block_recurrences    INTEGER NOT NULL DEFAULT 0,
+    -- Explicit continuation identity; a successor inherits its declared
+    -- finding's recurrence state instead of starting a new breaker counter.
+    finding_lineage_id   TEXT,
+    continuation_of_task_id TEXT,
+    -- Immutable provenance and exact contract for a separately dispatched
+    -- independent review card.  These deliberately do not reuse task.body.
+    review_of_task_id    TEXT,
+    review_candidate     TEXT,
+    review_contract      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_links (
@@ -1150,6 +1172,7 @@ CREATE INDEX IF NOT EXISTS idx_runs_task             ON task_runs(task_id, start
 CREATE INDEX IF NOT EXISTS idx_runs_status           ON task_runs(status);
 CREATE INDEX IF NOT EXISTS idx_attachments_task      ON task_attachments(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notify_task           ON kanban_notify_subs(task_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_finding_lineage ON tasks(finding_lineage_id);
 """
 
 
@@ -1338,6 +1361,7 @@ def create_task(
     project_source_task_id: Optional[str] = None,
     creator_task_id: Optional[str] = None,
     completion_contract: Optional[str] = None,
+    continuation_of_task_id: Optional[str] = None,
 ) -> str:
     """Create a task (optionally under ``parents``); returns its id.
 
@@ -1353,6 +1377,9 @@ def create_task(
     in the active profile's projects.db — see ``_resolve_project_link``.
     ``workspace_kind=None`` (omitted) inherits a project-scoped board's project;
     an explicit ``"scratch"`` or ``project_id=""`` is a request for no project.
+    ``continuation_of_task_id`` explicitly carries a remediation/finding lineage:
+    its typed-block recurrence state is inherited and a tripped lineage starts
+    stopped in triage rather than silently becoming dispatchable.
     """
     from hermes_cli.kanban_db_graph import initial_task_state, inherit_creator_origin
     from hermes_cli.kanban_pr_acceptance import validate_contract
@@ -1391,6 +1418,7 @@ def create_task(
     )
     parents = tuple(p for p in parents if p)
     skills_list = _normalize_task_skills(skills)
+    continuation_of_task_id = _nonblank_str(continuation_of_task_id)
 
     # Idempotency check BEFORE the write txn (no lock held); a concurrent-create
     # race may insert twice, the next lookup stabilises on the newest.
@@ -1420,6 +1448,29 @@ def create_task(
             # commit so the dispatcher never sees a half-built graph.
             with write_txn(conn, allow_nested=True):
                 task_status, tenant = initial_task_state(conn, parents, initial_status, triage, tenant)
+                lineage_id = None
+                inherited_kind = None
+                inherited_recurrences = 0
+                if continuation_of_task_id:
+                    predecessor = conn.execute(
+                        "SELECT id, finding_lineage_id, block_kind, block_recurrences, status "
+                        "FROM tasks WHERE id = ?", (continuation_of_task_id,),
+                    ).fetchone()
+                    if predecessor is None:
+                        raise ValueError(f"continuation task not found: {continuation_of_task_id}")
+                    lineage_id = _nonblank_str(_row_get(predecessor, "finding_lineage_id")) or predecessor["id"]
+                    lineage_state = conn.execute(
+                        "SELECT block_kind, block_recurrences FROM tasks "
+                        "WHERE id = ? OR finding_lineage_id = ? "
+                        "ORDER BY block_recurrences DESC, created_at DESC LIMIT 1",
+                        (lineage_id, lineage_id),
+                    ).fetchone()
+                    inherited_kind = _row_get(lineage_state, "block_kind") if lineage_state else None
+                    inherited_recurrences = int(_row_get(lineage_state, "block_recurrences") or 0) if lineage_state else 0
+                    # A declared successor shares the finding's stop state. It
+                    # must never turn a detected loop into a fresh ready card.
+                    if inherited_recurrences >= BLOCK_RECURRENCE_LIMIT:
+                        task_status = "triage"
                 # Project worktree: fresh dir under the repo + deterministic
                 # branch, instead of the random ``wt/<id>`` worker fallback.
                 if project_obj is not None and workspace_kind == "worktree":
@@ -1437,8 +1488,9 @@ def create_task(
                         max_runtime_seconds,
                         skills, max_retries, model_override, provider_override,
                         reasoning_effort,
-                        goal_mode, goal_max_turns, session_id, completion_contract
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        goal_mode, goal_max_turns, session_id, completion_contract,
+                        finding_lineage_id, continuation_of_task_id, block_kind, block_recurrences
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id, title.strip(), body, assignee, task_status, priority,
@@ -1448,6 +1500,7 @@ def create_task(
                         json.dumps(skills_list) if skills_list is not None else None,
                         _opt_int(max_retries), model_override, provider_override, reasoning_effort,
                         1 if goal_mode else 0, _opt_int(goal_max_turns), session_id, completion_contract,
+                        lineage_id, continuation_of_task_id, inherited_kind, inherited_recurrences,
                     ),
                 )
                 for pid in parents:
@@ -1470,6 +1523,8 @@ def create_task(
                         "goal_mode": bool(goal_mode) or None,
                         "model_override": model_override,
                         "provider_override": provider_override,
+                        "continuation_of_task_id": continuation_of_task_id,
+                        "finding_lineage_id": lineage_id,
                     },
                 )
                 if task_status == "blocked":
@@ -1490,6 +1545,12 @@ def create_task(
                             "dependency_wait",
                             {"reason": "parent_not_done", "parent": gating[0]},
                         )
+                if continuation_of_task_id and task_status == "triage":
+                    _append_event(
+                        conn, task_id, "continuation_stopped",
+                        {"continuation_of": continuation_of_task_id, "lineage_id": lineage_id,
+                         "reason": "block_loop_detected", "recurrences": inherited_recurrences},
+                    )
                 # ACK-edge: the originating channel hears a child BLOCK, not just the fan-in.
                 inherit_creator_origin(conn, task_id, creator_task_id, created_at=now)
                 _inherit_notify_subs(conn, task_id, parents, created_at=now)
@@ -3421,6 +3482,68 @@ def redact_review_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(redact_review_value(item) for item in value)
     return value
+
+
+def create_independent_review_task(
+    conn: sqlite3.Connection, implementation_task_id: str, *, reviewer: str,
+    candidate: str, review_contract: str, title: Optional[str] = None,
+) -> str:
+    """Atomically create a separately-routed review card for one exact candidate.
+
+    This is intentionally not :func:`reopen_review_task`: reopening returns an
+    existing card to its implementer.  The new card is born in ``review`` with
+    its reviewer assignment and explicit source/candidate/contract in the same
+    transaction, so the dispatcher cannot observe an unassigned successor or
+    infer stale implementation prose as its review goal.
+    """
+    implementation_task_id = _nonblank_str(implementation_task_id)
+    reviewer = _canonical_assignee(_nonblank_str(reviewer))
+    candidate = _nonblank_str(candidate)
+    review_contract = _nonblank_str(review_contract)
+    if not implementation_task_id:
+        raise ValueError("implementation_task_id is required")
+    if not reviewer:
+        raise ValueError("reviewer is required")
+    if not candidate:
+        raise ValueError("candidate is required")
+    if not review_contract:
+        raise ValueError("review_contract is required")
+    assert implementation_task_id is not None and reviewer is not None
+    assert candidate is not None and review_contract is not None
+    now = int(time.time())
+    with write_txn(conn):
+        source = conn.execute(
+            "SELECT id, tenant, project_id FROM tasks WHERE id = ?",
+            (implementation_task_id,),
+        ).fetchone()
+        if source is None:
+            raise ValueError(f"implementation task not found: {implementation_task_id}")
+        review_id = _new_task_id()
+        review_title = _nonblank_str(title) or f"Independent review: {candidate}"
+        body = f"Exact candidate: {candidate}\n\nReview contract:\n{review_contract}"
+        conn.execute(
+            """
+            INSERT INTO tasks (
+                id, title, body, assignee, status, priority, created_at,
+                workspace_kind, tenant, project_id, review_of_task_id,
+                review_candidate, review_contract
+            ) VALUES (?, ?, ?, ?, 'review', 0, ?, 'scratch', ?, ?, ?, ?, ?)
+            """,
+            (review_id, review_title, body, reviewer, now, source["tenant"], source["project_id"],
+             implementation_task_id, candidate, review_contract),
+        )
+        payload = {
+            "assignee": reviewer, "status": "review", "review_of_task_id": implementation_task_id,
+            "candidate": candidate, "review_contract": review_contract,
+        }
+        _append_event(conn, review_id, "created", payload)
+        _append_event(conn, review_id, "independent_review_created", payload)
+        _append_event(conn, implementation_task_id, "independent_review_handed_off", {
+            "review_task_id": review_id, "reviewer": reviewer, "candidate": candidate,
+            "review_contract": review_contract,
+        })
+        _inherit_notify_subs(conn, review_id, (implementation_task_id,), created_at=now)
+    return review_id
 
 
 def request_review(
