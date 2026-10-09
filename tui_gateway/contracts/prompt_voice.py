@@ -272,6 +272,28 @@ method("clarify.lock", params=ClarifyLockParams, result=ClarifyLockResult,
        doc="Lock one answer of a batch clarify request (editable until every question is locked).")
 
 
+class ClarifyLockExactParams(SessionParams):
+    request_id: str
+    question_id: str
+    answer: JsonValue = ""  # non-string answers are JSON-encoded server-side
+
+
+class ClarifyLockExactStatus(WireEnum):
+    ok = "ok"
+    expired = "expired"
+    stale = "stale"
+    forbidden = "forbidden"
+
+
+class ClarifyLockExactResult(Result):
+    status: ClarifyLockExactStatus
+    remaining: list[str] | None = None
+
+
+method("clarify.lock.exact", params=ClarifyLockExactParams, result=ClarifyLockExactResult,
+       doc="Lock one batch-clarify answer only when the live session owns that server request.")
+
+
 class RequestAnswerParams(Params):
     id: str  # the open server→client request id
     result: dict[str, JsonValue]
@@ -328,6 +350,28 @@ class ApprovalRespondResult(Result):
 
 method("approval.respond", params=ApprovalRespondParams, result=ApprovalRespondResult,
        doc="Deliver the user's decision on a dangerous command (falls back to durable identity on a stale sid).")
+
+
+class ApprovalRespondExactParams(SessionParams):
+    request_id: str
+    choice: str
+
+
+class ApprovalRespondExactStatus(WireEnum):
+    applied = "applied"
+    stale = "stale"
+    not_found = "not_found"
+    forbidden = "forbidden"
+
+
+class ApprovalRespondExactResult(Result):
+    status: ApprovalRespondExactStatus
+    request_id: str
+    resolved: int
+
+
+method("approval.respond.exact", params=ApprovalRespondExactParams, result=ApprovalRespondExactResult,
+       doc="Deliver one offered approval choice only to the named pending request of a live session.")
 
 
 # ── voice ─────────────────────────────────────────────────────────────────────────────────────

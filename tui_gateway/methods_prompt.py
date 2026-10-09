@@ -1164,6 +1164,60 @@ def _(rid, params: dict) -> dict:
     return _ok(rid, {"status": "ok", "remaining": remaining})
 
 
+def _exact_live_session(params: dict, rid, *, required: tuple[str, ...]):
+    values = []
+    for field in ("session_id", *required):
+        value = params.get(field)
+        if not isinstance(value, str) or not value:
+            return None, None, _err(rid, 4002, f"{field} required")
+        values.append(value)
+    session = _sessions.get(values[0])
+    if session is None:
+        return None, values, None
+    profile = params.get("profile")
+    if profile is not None and not isinstance(profile, str):
+        return None, None, _err(rid, 4002, "profile must be a string")
+    if profile and not _live_profile_matches(session, _profile_home(profile)):
+        return None, values, "forbidden"
+    return session, values, "ok"
+
+
+@method("clarify.lock.exact")
+def _(rid, params: dict) -> dict:
+    session, values, state = _exact_live_session(params, rid, required=("request_id", "question_id"))
+    if values is None:
+        return state
+    session_id, request_id, question_id = values
+    if state is None:
+        return _ok(rid, {"status": "stale", "remaining": None})
+    if state == "forbidden":
+        return _ok(rid, {"status": "forbidden", "remaining": None})
+    answer = params.get("answer", "")
+    if answer is not None and not isinstance(answer, str):
+        answer = json.dumps(answer, ensure_ascii=False)
+    if (proxied := _lock_compute_host_clarify(
+        rid, request_id, question_id, answer, session_id=session_id,
+    )) is not None:
+        return proxied
+    from tui_gateway import server_requests
+    with server_requests._lock:
+        req = server_requests._open.get(request_id)
+        if req is None or req.qids is None:
+            return _ok(rid, {"status": "expired", "remaining": None})
+        if req.sid != session_id:
+            return _ok(rid, {"status": "forbidden", "remaining": None})
+        if question_id not in req.qids:
+            return _err(rid, 4002, f"unknown question_id {question_id!r}")
+        req.locked[question_id] = answer
+        remaining = [qid for qid in req.qids if qid not in req.locked]
+        if not remaining:
+            req.result, req.answered = {"answers": dict(req.locked), "outcome": "submitted"}, True
+            server_requests._open.pop(request_id, None)
+    if not remaining:
+        req.event.set()
+    return _ok(rid, {"status": "ok", "remaining": remaining})
+
+
 @method("request.answer")
 def _(rid, params: dict) -> dict:
     """Answer an open server→client request from a client that did not receive it (a Bot Mode room
@@ -1215,6 +1269,36 @@ def _(rid, params: dict) -> dict:
         lambda a: a.resolve_gateway_approval(
             session["session_key"], params.get("choice", "deny"),
             resolve_all=params.get("all", False), request_id=params.get("request_id")))
+
+
+@method("approval.respond.exact")
+def _(rid, params: dict) -> dict:
+    session, values, state = _exact_live_session(params, rid, required=("request_id", "choice"))
+    if values is None:
+        return state
+    _session_id, request_id, choice = values
+    if state is None:
+        return _ok(rid, {"status": "stale", "request_id": request_id, "resolved": 0})
+    if state == "forbidden":
+        return _ok(rid, {"status": "forbidden", "request_id": request_id, "resolved": 0})
+    try:
+        import tools.approval as approval
+        with approval._lock:
+            queue = approval._gateway_queues.get(session["session_key"])
+            entry = next((item for item in queue or () if item.data.get("request_id") == request_id), None)
+            if entry is None:
+                return _ok(rid, {"status": "not_found", "request_id": request_id, "resolved": 0})
+            choices = _approval_request_payload(entry.data).get("choices") or []
+            if choice not in choices:
+                return _err(rid, 4002, "choice is not offered for this request")
+            queue.remove(entry)
+            if not queue:
+                approval._gateway_queues.pop(session["session_key"], None)
+            entry.result = choice
+            entry.event.set()
+    except Exception as e:
+        return _err(rid, 5004, str(e))
+    return _ok(rid, {"status": "applied", "request_id": request_id, "resolved": 1})
 
 
 # ── attachments ─────────────────────────────────────────────────────────────

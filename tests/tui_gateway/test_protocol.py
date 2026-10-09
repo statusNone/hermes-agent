@@ -727,6 +727,112 @@ def test_approval_respond_4001_when_nothing_resolves(server, monkeypatch):
     assert response["error"]["code"] == 4001
 
 
+def test_approval_respond_exact_applies_only_the_named_live_queue_entry(server):
+    from tools import approval
+    from tools.approval_gateway_wait import _ApprovalEntry
+
+    entry = _ApprovalEntry({"request_id": "approval-exact", "choices": ["once", "deny"]})
+    other = _ApprovalEntry({"request_id": "approval-other", "choices": ["deny"]})
+    server._sessions["ui-exact"] = {"session_key": "agent-exact", "history": []}
+    saved = approval._gateway_queues.pop("agent-exact", None)
+    approval._gateway_queues["agent-exact"] = [entry, other]
+    try:
+        response = server.handle_request({
+            "id": "approval-exact", "method": "approval.respond.exact",
+            "params": {"session_id": "ui-exact", "request_id": "approval-exact", "choice": "once"},
+        })
+        assert response["result"] == {"status": "applied", "request_id": "approval-exact", "resolved": 1}
+        assert entry.result == "once" and entry.event.is_set()
+        assert approval._gateway_queues["agent-exact"] == [other]
+    finally:
+        approval._gateway_queues.pop("agent-exact", None)
+        if saved is not None:
+            approval._gateway_queues["agent-exact"] = saved
+
+
+def test_approval_respond_exact_never_falls_back_or_consumes_fifo(server):
+    from tools import approval
+    from tools.approval_gateway_wait import _ApprovalEntry
+
+    owner = _ApprovalEntry({"request_id": "owner-request", "choices": ["once", "deny"]})
+    oldest = _ApprovalEntry({"request_id": "oldest-request", "choices": ["deny"]})
+    server._sessions["ui-owner"] = {"session_key": "agent-owner", "history": []}
+    server._sessions["ui-caller"] = {"session_key": "agent-caller", "history": []}
+    saved_owner = approval._gateway_queues.pop("agent-owner", None)
+    saved_caller = approval._gateway_queues.pop("agent-caller", None)
+    approval._gateway_queues["agent-owner"] = [owner]
+    approval._gateway_queues["agent-caller"] = [oldest]
+    try:
+        cross = server.handle_request({
+            "id": "cross", "method": "approval.respond.exact",
+            "params": {"session_id": "ui-caller", "request_id": "owner-request", "choice": "once"},
+        })
+        stale = server.handle_request({
+            "id": "stale", "method": "approval.respond.exact",
+            "params": {"session_id": "gone", "request_id": "owner-request", "choice": "once"},
+        })
+        unknown = server.handle_request({
+            "id": "unknown", "method": "approval.respond.exact",
+            "params": {"session_id": "ui-caller", "request_id": "unknown-request", "choice": "deny"},
+        })
+        assert cross["result"] == {"status": "not_found", "request_id": "owner-request", "resolved": 0}
+        assert stale["result"] == {"status": "stale", "request_id": "owner-request", "resolved": 0}
+        assert unknown["result"] == {"status": "not_found", "request_id": "unknown-request", "resolved": 0}
+        assert not owner.event.is_set() and not oldest.event.is_set()
+    finally:
+        approval._gateway_queues.pop("agent-owner", None)
+        approval._gateway_queues.pop("agent-caller", None)
+        if saved_owner is not None:
+            approval._gateway_queues["agent-owner"] = saved_owner
+        if saved_caller is not None:
+            approval._gateway_queues["agent-caller"] = saved_caller
+
+
+def test_clarify_lock_exact_requires_the_request_owner_session(server):
+    from tui_gateway import server_requests
+
+    server._sessions["ui-owner"] = {"session_key": "agent-owner", "history": []}
+    server._sessions["ui-caller"] = {"session_key": "agent-caller", "history": []}
+    req = server_requests.ServerRequest("ui-owner", "clarify", {}, qids=["q0"])
+    server_requests._open[req.id] = req
+    try:
+        cross = server.handle_request({
+            "id": "clarify-cross", "method": "clarify.lock.exact",
+            "params": {"session_id": "ui-caller", "request_id": req.id, "question_id": "q0", "answer": "no"},
+        })
+        assert cross["result"] == {"status": "forbidden", "remaining": None}
+        assert req.id in server_requests._open and req.locked == {}
+        happy = server.handle_request({
+            "id": "clarify-owner", "method": "clarify.lock.exact",
+            "params": {"session_id": "ui-owner", "request_id": req.id, "question_id": "q0", "answer": "yes"},
+        })
+        assert happy["result"] == {"status": "ok", "remaining": []}
+    finally:
+        server_requests._open.pop(req.id, None)
+
+
+def test_approval_respond_exact_rejects_an_unoffered_choice_without_mutation(server):
+    from tools import approval
+    from tools.approval_gateway_wait import _ApprovalEntry
+
+    entry = _ApprovalEntry({"request_id": "approval-choice", "choices": ["deny"]})
+    server._sessions["ui-exact"] = {"session_key": "agent-exact", "history": []}
+    saved = approval._gateway_queues.pop("agent-exact", None)
+    approval._gateway_queues["agent-exact"] = [entry]
+    try:
+        response = server.handle_request({
+            "id": "approval-choice", "method": "approval.respond.exact",
+            "params": {"session_id": "ui-exact", "request_id": "approval-choice", "choice": "always"},
+        })
+        assert response["error"]["code"] == 4002
+        assert approval._gateway_queues["agent-exact"] == [entry]
+        assert not entry.event.is_set()
+    finally:
+        approval._gateway_queues.pop("agent-exact", None)
+        if saved is not None:
+            approval._gateway_queues["agent-exact"] = saved
+
+
 # ── Session lookup ───────────────────────────────────────────────────
 
 

@@ -511,12 +511,21 @@ def test_compute_host_open_request_survives_activation_and_proxies_locks_and_res
         assert supervisor.responses == [(sid, {"lock": {"request_id": "srq-host", "question_id": "q0", "answer": "a"}}, 15.0)]
         assert server._live_session_payload(sid, session)["open_requests"][0]["params"]["answers"] == {"q0": "a"}
 
+        server._sessions["other-clarify"] = _session(agent=None, agent_ready=threading.Event(), _compute_host_active=True)
+        blocked = server.handle_request({
+            "id": "exact-wrong-session", "method": "clarify.lock.exact",
+            "params": {"session_id": "other-clarify", "request_id": "srq-host", "question_id": "q1", "answer": "b"},
+        })
+        assert blocked["result"] == {"status": "forbidden", "remaining": None}
+        assert len(supervisor.responses) == 1
+
         # The client's response frame (cancel-all) is relayed to the child and clears the mirror.
         assert server.dispatch({"jsonrpc": "2.0", "id": "srq-host", "result": {}}) is None
         assert supervisor.responses[-1] == (sid, {"frame": {"jsonrpc": "2.0", "id": "srq-host", "result": {}}}, 15.0)
         assert "open_requests" not in server._live_session_payload(sid, session)
     finally:
         server._sessions.pop(sid, None)
+        server._sessions.pop("other-clarify", None)
 
 
 def test_compute_host_interrupt_forwards_when_parent_running_mirror_is_stale(monkeypatch):

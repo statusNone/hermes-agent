@@ -79,6 +79,24 @@
       }
     },
     {
+      "name": "approval.respond.exact",
+      "summary": "Deliver one offered approval choice only to the named pending request of a live session.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/ApprovalRespondExactParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ApprovalRespondExactResult"
+        }
+      }
+    },
+    {
       "name": "billing.auto_reload",
       "summary": "Enable/disable auto top-up with its threshold and reload amount (billing:manage).",
       "params": [
@@ -345,6 +363,24 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/ClarifyLockResult"
+        }
+      }
+    },
+    {
+      "name": "clarify.lock.exact",
+      "summary": "Lock one batch-clarify answer only when the live session owns that server request.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/ClarifyLockExactParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ClarifyLockExactResult"
         }
       }
     },
@@ -5141,6 +5177,75 @@
         "title": "ApprovalRequestParams",
         "type": "object"
       },
+      "ApprovalRespondExactParams": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "choice": {
+            "title": "Choice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "request_id",
+          "choice"
+        ],
+        "title": "ApprovalRespondExactParams",
+        "type": "object"
+      },
+      "ApprovalRespondExactResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ApprovalRespondExactStatus"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "resolved": {
+            "title": "Resolved",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "request_id",
+          "resolved"
+        ],
+        "title": "ApprovalRespondExactResult",
+        "type": "object"
+      },
+      "ApprovalRespondExactStatus": {
+        "enum": [
+          "applied",
+          "stale",
+          "not_found",
+          "forbidden"
+        ],
+        "title": "ApprovalRespondExactStatus",
+        "type": "string"
+      },
       "ApprovalRespondParams": {
         "additionalProperties": false,
         "description": "``choice`` is one of the offered ``approval`` choices (once / session / always / deny); ``all``\nresolves every pending approval, ``request_id`` a specific one, neither the oldest.",
@@ -7583,6 +7688,84 @@
         "properties": {},
         "title": "ChangeSignalPayload",
         "type": "object"
+      },
+      "ClarifyLockExactParams": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "answer": {
+            "default": "",
+            "title": "Answer"
+          }
+        },
+        "required": [
+          "session_id",
+          "request_id",
+          "question_id"
+        ],
+        "title": "ClarifyLockExactParams",
+        "type": "object"
+      },
+      "ClarifyLockExactResult": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ClarifyLockExactStatus"
+          },
+          "remaining": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Remaining"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ClarifyLockExactResult",
+        "type": "object"
+      },
+      "ClarifyLockExactStatus": {
+        "enum": [
+          "ok",
+          "expired",
+          "stale",
+          "forbidden"
+        ],
+        "title": "ClarifyLockExactStatus",
+        "type": "string"
       },
       "ClarifyLockParams": {
         "additionalProperties": false,

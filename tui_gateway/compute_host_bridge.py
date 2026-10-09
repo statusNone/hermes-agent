@@ -194,13 +194,17 @@ def _relay_compute_host_response(frame: dict) -> bool:
     return True
 
 
-def _lock_compute_host_clarify(rid: str, request_id: str, question_id: str, answer: str | None) -> dict | None:
+def _lock_compute_host_clarify(
+    rid: str, request_id: str, question_id: str, answer: str | None, *, session_id: str | None = None,
+) -> dict | None:
     """Proxy a batch-clarify lock into the child that owns the request; keeps the parent mirror's locked
     answers current for reconnect snapshots. None when the request is not host-owned."""
     located = _compute_host_request_session(request_id)
     if located is None or not _session_uses_compute_host(located[1]):
         return None
     sid, session = located
+    if session_id is not None and sid != session_id:
+        return _ok(rid, {"status": "forbidden", "remaining": None})
     try:
         ack = _get_compute_host_supervisor().respond(
             sid, {"lock": {"request_id": request_id, "question_id": question_id, "answer": answer}})

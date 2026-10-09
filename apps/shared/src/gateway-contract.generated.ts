@@ -2765,6 +2765,18 @@ export interface ClarifyLockResult {
   remaining?: string[] | null
 }
 export type ClarifyLockStatus = 'ok' | 'expired'
+export interface ClarifyLockExactParams {
+  session_id: string
+  profile?: string | null
+  request_id: string
+  question_id: string
+  answer?: unknown
+}
+export interface ClarifyLockExactResult {
+  status: ClarifyLockExactStatus
+  remaining?: string[] | null
+}
+export type ClarifyLockExactStatus = 'ok' | 'expired' | 'stale' | 'forbidden'
 export interface RequestAnswerParams {
   id: string
   result: Record<string, unknown>
@@ -2813,6 +2825,18 @@ export interface ApprovalRespondParams {
 export interface ApprovalRespondResult {
   resolved: number
 }
+export interface ApprovalRespondExactParams {
+  session_id: string
+  profile?: string | null
+  request_id: string
+  choice: string
+}
+export interface ApprovalRespondExactResult {
+  status: ApprovalRespondExactStatus
+  request_id: string
+  resolved: number
+}
+export type ApprovalRespondExactStatus = 'applied' | 'stale' | 'not_found' | 'forbidden'
 export interface VoiceToggleParams {
   action?: VoiceToggleAction
   profile?: string | null
@@ -4889,6 +4913,8 @@ export interface RpcMethods {
   'approval.received': { params: ApprovalReceivedParams; result: ApprovalReceivedResult }
   /** Deliver the user's decision on a dangerous command (falls back to durable identity on a stale sid). */
   'approval.respond': { params: ApprovalRespondParams; result: ApprovalRespondResult }
+  /** Deliver one offered approval choice only to the named pending request of a live session. */
+  'approval.respond.exact': { params: ApprovalRespondExactParams; result: ApprovalRespondExactResult }
   /** Enable/disable auto top-up with its threshold and reload amount (billing:manage). */
   'billing.auto_reload': { params: BillingAutoReloadParams; result: BillingMutationResult }
   /** Start a one-off top-up charge (billing:manage, idempotent). */
@@ -4919,6 +4945,8 @@ export interface RpcMethods {
   'browser.manage': { params: BrowserManageParams; result: BrowserManageResult }
   /** Lock one answer of a batch clarify request (editable until every question is locked). */
   'clarify.lock': { params: ClarifyLockParams; result: ClarifyLockResult }
+  /** Lock one batch-clarify answer only when the live session owns that server request. */
+  'clarify.lock.exact': { params: ClarifyLockExactParams; result: ClarifyLockExactResult }
   /** Run ``hermes <argv>`` non-interactively and capture its output; ``blocked`` explains a refusal. */
   'cli.exec': { params: CliExecParams; result: CliExecResult }
   /** What the calling client handles, sent once per connection (after gateway.ready); returns the server→client request methods this backend may send. */
@@ -5390,6 +5418,7 @@ export const RPC_METHODS = [
   'approval.pending',
   'approval.received',
   'approval.respond',
+  'approval.respond.exact',
   'billing.auto_reload',
   'billing.charge',
   'billing.charge_status',
@@ -5405,6 +5434,7 @@ export const RPC_METHODS = [
   'browser.controller.result',
   'browser.manage',
   'clarify.lock',
+  'clarify.lock.exact',
   'cli.exec',
   'client.capabilities',
   'clipboard.paste',
