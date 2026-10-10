@@ -8,6 +8,8 @@ known to emit plus ``extra="allow"`` so a new upstream key never trips the stric
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from .base import JsonValue, Params, Result, WireEnum
@@ -182,6 +184,19 @@ class CliExecResult(Result):
 
 method("cli.exec", params=CliExecParams, result=CliExecResult,
        doc="Run ``hermes <argv>`` non-interactively and capture its output; ``blocked`` explains a refusal.")
+
+
+class CliExecExactParams(Params):
+    command: Literal["version"]
+
+
+class CliExecExactResult(Result):
+    output: str
+    code: Literal[0]
+
+
+method("cli.exec.exact", params=CliExecExactParams, result=CliExecExactResult,
+       doc="Realm-scoped in-process Hermes version banner for the fixed ``[\"--version\"]`` capability.")
 
 
 # ── command catalog / resolve / dispatch / slash.exec ─────────────────────────────────────────

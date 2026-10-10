@@ -403,6 +403,24 @@
       }
     },
     {
+      "name": "cli.exec.exact",
+      "summary": "Realm-scoped in-process Hermes version banner for the fixed ``[\"--version\"]`` capability.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/CliExecExactParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CliExecExactResult"
+        }
+      }
+    },
+    {
       "name": "client.capabilities",
       "summary": "What the calling client handles, sent once per connection (after gateway.ready); returns the server\u2192client request methods this backend may send.",
       "params": [
@@ -7951,6 +7969,41 @@
           }
         },
         "title": "ClarifyResult",
+        "type": "object"
+      },
+      "CliExecExactParams": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "const": "version",
+            "title": "Command",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "CliExecExactParams",
+        "type": "object"
+      },
+      "CliExecExactResult": {
+        "additionalProperties": false,
+        "properties": {
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "code": {
+            "const": 0,
+            "title": "Code",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "output",
+          "code"
+        ],
+        "title": "CliExecExactResult",
         "type": "object"
       },
       "CliExecParams": {

@@ -557,6 +557,24 @@ def _(rid, params: dict) -> dict:
         env=_compat.restore_ambient_pythonpath(hermes_subprocess_env(inherit_credentials=True)))
 
 
+@method("cli.exec.exact")
+def _(rid, params: dict) -> dict:
+    """Return the fixed ``[\"--version\"]`` capability without invoking the CLI."""
+    command = params.get("command")
+    if not isinstance(command, str) or not command:
+        return _err(rid, 4003, "command must be a non-empty string")
+    if command != "version":
+        return _err(rid, 4011, f"unknown command: {command}")
+    # ``hermes_cli.__version__`` reads only the install stamp and never falls
+    # through to version_info's live-git subprocess path.
+    from hermes_cli import __version__
+
+    return _ok(rid, {
+        "output": f"Hermes Agent v{__version__}\nPython: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "code": 0,
+    })
+
+
 @_rpc("command.resolve", 5012)
 def _(rid, params: dict) -> dict:
     r = _tools_mod("hermes_cli.commands").resolve_command(params.get("name", ""))

@@ -3657,6 +3657,13 @@ export interface CliExecResult {
   output: string
   hint?: string | null
 }
+export interface CliExecExactParams {
+  command: 'version'
+}
+export interface CliExecExactResult {
+  output: string
+  code: 0
+}
 export interface CommandsCatalogParams {
   session_id?: string | null
   profile?: string | null
@@ -4949,6 +4956,8 @@ export interface RpcMethods {
   'clarify.lock.exact': { params: ClarifyLockExactParams; result: ClarifyLockExactResult }
   /** Run ``hermes <argv>`` non-interactively and capture its output; ``blocked`` explains a refusal. */
   'cli.exec': { params: CliExecParams; result: CliExecResult }
+  /** Realm-scoped in-process Hermes version banner for the fixed ``["--version"]`` capability. */
+  'cli.exec.exact': { params: CliExecExactParams; result: CliExecExactResult }
   /** What the calling client handles, sent once per connection (after gateway.ready); returns the server→client request methods this backend may send. */
   'client.capabilities': { params: ClientCapabilitiesParams; result: ClientCapabilitiesResult }
   /** Save the host clipboard image into the session and queue it for the next turn. */
@@ -5436,6 +5445,7 @@ export const RPC_METHODS = [
   'clarify.lock',
   'clarify.lock.exact',
   'cli.exec',
+  'cli.exec.exact',
   'client.capabilities',
   'clipboard.paste',
   'command.dispatch',
