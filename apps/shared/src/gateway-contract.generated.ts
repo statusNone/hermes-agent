@@ -1827,6 +1827,7 @@ export interface PingResult {
 }
 export interface GatewayCapabilitiesResult {
   per_session_exclusive_submit: boolean
+  cli_exec_exact_version: boolean
 }
 export interface ClientCapabilitiesParams {
   server_requests?: boolean

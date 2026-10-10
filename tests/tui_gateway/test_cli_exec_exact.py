@@ -37,6 +37,28 @@ def test_cli_exec_exact_version_returns_only_bounded_banner() -> None:
     assert "cli.exec.exact" not in server._LONG_HANDLERS
 
 
+def test_gateway_capabilities_advertises_registered_exact_version_handler(
+    monkeypatch,
+) -> None:
+    def capabilities() -> dict:
+        response = server.handle_request({
+            "id": "capabilities",
+            "method": "gateway.capabilities",
+            "params": {},
+        })
+        assert response is not None
+        return response
+
+    response = capabilities()
+
+    assert response["result"]["cli_exec_exact_version"] is True
+    assert isinstance(response["result"]["per_session_exclusive_submit"], bool)
+
+    monkeypatch.delitem(server._methods, "cli.exec.exact")
+
+    assert capabilities()["result"]["cli_exec_exact_version"] is False
+
+
 @pytest.mark.parametrize(
     "params, code",
     [

@@ -14341,10 +14341,15 @@
           "per_session_exclusive_submit": {
             "title": "Per Session Exclusive Submit",
             "type": "boolean"
+          },
+          "cli_exec_exact_version": {
+            "title": "Cli Exec Exact Version",
+            "type": "boolean"
           }
         },
         "required": [
-          "per_session_exclusive_submit"
+          "per_session_exclusive_submit",
+          "cli_exec_exact_version"
         ],
         "title": "GatewayCapabilitiesResult",
         "type": "object"

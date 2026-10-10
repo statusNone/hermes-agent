@@ -558,7 +558,7 @@ def _(rid, params: dict) -> dict:
 
 
 @method("cli.exec.exact")
-def _(rid, params: dict) -> dict:
+def cli_exec_exact_version(rid, params: dict) -> dict:
     """Return the fixed ``[\"--version\"]`` capability without invoking the CLI."""
     command = params.get("command")
     if not isinstance(command, str) or not command:
@@ -573,6 +573,13 @@ def _(rid, params: dict) -> dict:
         "output": f"Hermes Agent v{__version__}\nPython: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         "code": 0,
     })
+
+
+def cli_exec_exact_version_available() -> bool:
+    """Whether this process registered the fixed version handler on its production RPC table."""
+    from tui_gateway import server
+
+    return "cli.exec.exact" in server._methods
 
 
 @_rpc("command.resolve", 5012)

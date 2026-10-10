@@ -20,6 +20,8 @@ method("ping", params=PingParams, result=PingResult,
 
 class GatewayCapabilitiesResult(Result):
     per_session_exclusive_submit: bool
+    #: The exact fixed ``cli.exec.exact {command: "version"}`` handler is registered in this build.
+    cli_exec_exact_version: bool
 
 
 method("gateway.capabilities", params=PingParams, result=GatewayCapabilitiesResult,
