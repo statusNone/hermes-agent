@@ -74,6 +74,12 @@ class GatewayTurnPersistenceMixin:
         # and would be delivered verbatim (peer agents would ingest it as a completed turn).
         if _is_gateway_hidden_reasoning_incomplete_turn(agent_result):
             response = ""
+        # A failed turn must surface its failure, not leak a control token as user-visible text.
+        # Blank only an exact marker so normalization below renders the existing failure notice;
+        # ordinary partial/error prose remains untouched.
+        from gateway.response_filters import is_intentional_silence_response
+        if agent_result.get("failed") and is_intentional_silence_response(response):
+            response = ""
         _intentional_silence = self._is_intentional_silence(agent_result, response)
         # A queued (/queue) chain's TERMINAL turn owns the silence verdict, not the event that
         # opened the chain: an internal follow-up, or a message not addressed to the bot, may go

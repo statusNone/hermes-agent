@@ -1,5 +1,7 @@
 """Gateway intentional-silence token behavior."""
 
+import asyncio
+
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -93,6 +95,31 @@ def test_blank_and_prose_mentions_are_not_silence():
 def test_failed_agent_result_never_counts_as_intentional_silence():
     assert is_intentional_silence_agent_result({"failed": False}, "NO_REPLY")
     assert not is_intentional_silence_agent_result({"failed": True}, "NO_REPLY")
+
+
+def test_failed_agent_result_with_marker_surfaces_failure_without_leaking_marker(monkeypatch, tmp_path):
+    runner = _runner(monkeypatch, tmp_path)
+    runner._run_agent = AsyncMock(return_value={
+        "final_response": "[SILENT]",
+        "messages": [
+            {"role": "user", "content": "side chatter"},
+            {"role": "assistant", "content": "[SILENT]"},
+        ],
+        "tools": [],
+        "history_offset": 0,
+        "last_prompt_tokens": 0,
+        "api_calls": 1,
+        "failed": True,
+        "error": "provider failed",
+    })
+
+    response = asyncio.run(runner._handle_message_with_agent(
+        _event(reply_expected=False), _source(), "agent:main:telegram:group:-1001:12345", 1
+    ))
+
+    assert response
+    assert not is_intentional_silence_response(response)
+    assert "SILENT" not in response
 
 
 @pytest.mark.asyncio

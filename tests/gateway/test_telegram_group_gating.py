@@ -138,6 +138,16 @@ def _group_message(
     )
 
 
+def _reply_to_other_human(message):
+    message.reply_to_message = SimpleNamespace(
+        from_user=SimpleNamespace(id=222),
+        message_id=11,
+        text="another person's message",
+        caption=None,
+    )
+    return message
+
+
 def _dm_message(text="hello", *, from_user_id=111):
     return SimpleNamespace(
         message_id=43,
@@ -171,6 +181,42 @@ def _bot_command_entity(text, command):
     """
     offset = text.index(command)
     return SimpleNamespace(type="bot_command", offset=offset, length=len(command))
+
+
+@pytest.mark.parametrize(
+    ("message", "message_type", "expected"),
+    [
+        pytest.param(_group_message("Race and Mike are talking"), MessageType.TEXT, False, id="ambient-group"),
+        pytest.param(
+            _reply_to_other_human(_group_message("agreed")),
+            MessageType.TEXT,
+            False,
+            id="reply-to-other-human",
+        ),
+        pytest.param(
+            _group_message("@hermes_bot answer", entities=[_mention_entity("@hermes_bot answer")]),
+            MessageType.TEXT,
+            True,
+            id="direct-mention",
+        ),
+        pytest.param(_group_message("answer", reply_to_bot=True), MessageType.TEXT, True, id="reply-to-bot"),
+        pytest.param(_group_message("Vyzel, answer"), MessageType.TEXT, True, id="configured-wake-word"),
+        pytest.param(_group_message("/status"), MessageType.COMMAND, True, id="command"),
+        pytest.param(_dm_message("hello"), MessageType.TEXT, True, id="dm"),
+    ],
+)
+def test_message_event_marks_whether_a_reply_is_expected(message, message_type, expected):
+    """Telegram must tell the delivery filter whether the current message addressed the bot.
+
+    Open-group ambient messages are deliberately admitted so the model may make a material
+    contribution, but a successful bare silence marker must also be allowed to stand. Direct
+    mentions, replies, wake words, commands and DMs still require a visible answer.
+    """
+    adapter = _make_adapter(require_mention=False, mention_patterns=[r"(?i)\bvyzel\b"])
+
+    event = adapter._build_message_event(message, message_type)
+
+    assert event.reply_expected is expected
 
 
 def test_unmentioned_group_messages_can_be_observed_without_dispatching():

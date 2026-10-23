@@ -6654,6 +6654,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
         if existing is None:
             pending[key] = event
             return
+        existing.absorb_reply_expected(event)
         existing.media_urls.extend(event.media_urls)
         existing.media_types.extend(event.media_types)
         if event.text:
@@ -7101,6 +7102,24 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
                 reply_to_text = None
         return reply_to_id, reply_to_text
 
+    def _telegram_reply_expected(self, message: Message, msg_type: MessageType) -> Optional[bool]:
+        """Current-message addressing, independent of admission and historic reply context.
+
+        Open-group chatter may abstain or contribute; commands, mentions, wake words and
+        replies to this bot require a reply. Unknown bot identity keeps the fallback.
+        """
+        if not self._is_group_chat(message):
+            return True
+        text = getattr(message, "text", None) or getattr(message, "caption", None) or ""
+        if (
+            msg_type == MessageType.COMMAND or text.lstrip().startswith("/")
+            or self._is_reply_to_bot(message)
+            or self._message_mentions_bot(message)
+            or self._message_matches_mention_patterns(message)
+        ):
+            return True
+        return False if self._bot and self._current_bot_username() else None
+
     def _build_message_event(self, message: Message, msg_type: MessageType, update_id: Optional[int] = None) -> MessageEvent:
         """Build a MessageEvent from a Telegram message. ``update_id`` lets ``/restart`` record the
         triggering offset so the new gateway process advances past it."""
@@ -7143,7 +7162,8 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
             message_id=str(message.message_id), platform_update_id=update_id,
             reply_to_message_id=reply_to_id, reply_to_text=reply_to_text, auto_skill=topic_skill,
             channel_prompt=group_identity_prompt(self, message, channel_prompt),
-            edit_revision=self._edit_revision(message, update_id), timestamp=message.date)
+            edit_revision=self._edit_revision(message, update_id), timestamp=message.date,
+            reply_expected=self._telegram_reply_expected(message, msg_type))
 
     @staticmethod
     def _edit_revision(message, update_id: Optional[int]) -> Optional[str]:
