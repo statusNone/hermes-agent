@@ -97,7 +97,8 @@ def test_failed_agent_result_never_counts_as_intentional_silence():
     assert not is_intentional_silence_agent_result({"failed": True}, "NO_REPLY")
 
 
-def test_failed_agent_result_with_marker_surfaces_failure_without_leaking_marker(monkeypatch, tmp_path):
+@pytest.mark.parametrize("reply_expected", [False, True, None])
+def test_failed_agent_result_with_marker_surfaces_failure_without_leaking_marker(monkeypatch, tmp_path, reply_expected):
     runner = _runner(monkeypatch, tmp_path)
     runner._run_agent = AsyncMock(return_value={
         "final_response": "[SILENT]",
@@ -114,7 +115,7 @@ def test_failed_agent_result_with_marker_surfaces_failure_without_leaking_marker
     })
 
     response = asyncio.run(runner._handle_message_with_agent(
-        _event(reply_expected=False), _source(), "agent:main:telegram:group:-1001:12345", 1
+        _event(reply_expected=reply_expected), _source(), "agent:main:telegram:group:-1001:12345", 1
     ))
 
     assert response

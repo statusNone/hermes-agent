@@ -202,6 +202,8 @@ def _bot_command_entity(text, command):
         pytest.param(_group_message("answer", reply_to_bot=True), MessageType.TEXT, True, id="reply-to-bot"),
         pytest.param(_group_message("Vyzel, answer"), MessageType.TEXT, True, id="configured-wake-word"),
         pytest.param(_group_message("/status"), MessageType.COMMAND, True, id="command"),
+        pytest.param(_group_message("", caption="/status"), MessageType.PHOTO, True, id="caption-command"),
+        pytest.param(_group_message("are you coming?"), MessageType.TEXT, False, id="ambient-question"),
         pytest.param(_dm_message("hello"), MessageType.TEXT, True, id="dm"),
     ],
 )
@@ -217,6 +219,49 @@ def test_message_event_marks_whether_a_reply_is_expected(message, message_type, 
     event = adapter._build_message_event(message, message_type)
 
     assert event.reply_expected is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("addressing", ["ambient", "mention", "reply", "unknown-identity"])
+async def test_telegram_album_reply_expectation_reaches_delivery(addressing):
+    from gateway.config import GatewayConfig
+    from gateway.run import GatewayRunner
+
+    adapter = _make_adapter(require_mention=False)
+    first = adapter._build_message_event(_group_message("photo"), MessageType.PHOTO)
+    message = _group_message("another photo")
+    if addressing == "mention":
+        message.caption = "@hermes_bot explain"
+        message.caption_entities = [_mention_entity(message.caption)]
+    elif addressing == "reply":
+        message = _group_message("explain", reply_to_bot=True)
+    elif addressing == "unknown-identity":
+        adapter._bot = None
+    second = adapter._build_message_event(message, MessageType.PHOTO)
+    pending = {}
+    adapter._merge_into_pending(pending, "album", first)
+    adapter._merge_into_pending(pending, "album", second)
+
+    runner = GatewayRunner(GatewayConfig())
+    runner._deliver_queued_first_response = AsyncMock()
+    turn = SimpleNamespace(
+        session_key="album", stream_consumer_holder=[None], mute_notification_reply=False,
+        persist_user_display_kind=None, reply_expected=pending["album"].reply_expected,
+        source=first.source, _status_thread_metadata=None, event_message_id=None,
+        inbound_message_id=None, run_generation=1,
+    )
+    result = {"final_response": "[SILENT]", "failed": False}
+    await runner._run_agent_deliver_first_response(turn, None, result, result, None)
+    if addressing == "ambient":
+        runner._deliver_queued_first_response.assert_not_awaited()
+    else:
+        assert "silence marker" in runner._deliver_queued_first_response.await_args.args[0]
+
+    # Permission to abstain is not a command to suppress a useful contribution.
+    runner._deliver_queued_first_response.reset_mock()
+    result["final_response"] = "Here is a useful observation."
+    await runner._run_agent_deliver_first_response(turn, None, result, result, None)
+    assert runner._deliver_queued_first_response.await_args.args[0] == result["final_response"]
 
 
 def test_unmentioned_group_messages_can_be_observed_without_dispatching():
