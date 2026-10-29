@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run every blocking lint check CI runs, locally, with the same pinned tools: the lint
-workflow's guards, ruff and the code-health ratchet, plus the case-collision, lazy-deps and
-profile-archive guards that CI runs in workflows of their own.
+the workflow's guards, ruff and the code-health ratchet, plus the case-collision, lazy-deps,
+profile-archive and blob-size guards that CI runs in workflows of their own.
 
     python scripts/check                # everything, against the merge-base with origin/main
     python scripts/check --only health  # just the code-health ratchet
@@ -43,8 +43,8 @@ from scripts.code_health.ruff_runner import resolve_ruff  # noqa: E402
 
 _HOOK_MARK = "# hermes-agent scripts/check hook"
 # Hooks are shared by every worktree of the clone, so the checked-out branch decides nothing:
-# each candidate (the index being committed, each commit being pushed) is materialized and judged
-# by its own scripts/check, and a candidate that predates scripts/check is not judged.
+# each candidate (the index being committed, the tip of each pushed branch) is materialized and
+# judged by its own scripts/check, and a candidate that predates scripts/check is not judged.
 _HOOK_HEAD = f"""#!/usr/bin/env bash
 {_HOOK_MARK} (`scripts/check --install-hook`; skip once with --no-verify)
 """ + r"""repo="$(git rev-parse --show-toplevel)" || exit 1
@@ -61,12 +61,16 @@ done
 [ -n "$py" ] || py="$(command -v python3 || command -v python)" || {
   echo "scripts/check hook: no python3 or python on PATH" >&2; exit 1; }
 judge() {  # judge TREE-ISH ARGS...: check out TREE-ISH alone and run its own scripts/check ARGS
-  local tree=$1 tmp rc
+  local tree=$1 tmp dir rc
   shift
   tmp="$(mktemp -d)" || return 1
-  GIT_INDEX_FILE="$tmp/index" git read-tree "$tree" &&
-    GIT_INDEX_FILE="$tmp/index" git checkout-index -a --prefix="$tmp/tree/" &&
-    GIT_DIR="$git_dir" "$py" "$tmp/tree/scripts/check" "$@" </dev/null
+  # Git for Windows: native git and python get this path verbatim when MSYS path conversion
+  # is off (MSYS_NO_PATHCONV=1, as Hermes' terminal sets it), so hand them C:/... spelling.
+  dir="$tmp"
+  if command -v cygpath >/dev/null 2>&1; then dir="$(cygpath -m "$tmp")" || dir="$tmp"; fi
+  GIT_INDEX_FILE="$dir/index" git read-tree "$tree" &&
+    GIT_INDEX_FILE="$dir/index" git checkout-index -a -f --prefix="$dir/tree/" &&
+    GIT_DIR="$git_dir" "$py" "$dir/tree/scripts/check" "$@" </dev/null
   rc=$?
   rm -rf "$tmp"
   return $rc
@@ -82,7 +86,8 @@ git cat-file -e "$tree:scripts/check" 2>/dev/null || exit 0
 judge "$tree" --staged
 """,
     # stdin: "<local ref> <local sha> <remote ref> <remote sha>" per pushed ref; an all-zero
-    # local sha is a deletion. Each pushed commit is judged as CI will judge the PR.
+    # local sha is a deletion. Each pushed branch tip is judged, as CI judges the PR as a whole;
+    # intermediate commits are not judged one by one.
     "pre-push": _HOOK_HEAD + """status=0
 while read -r _ local_sha _ _; do
   case "$local_sha" in *[!0]*) ;; *) continue ;; esac
@@ -95,18 +100,23 @@ exit $status
 
 # name -> argv (relative to the repo root); mirrors the blocking steps in lint.yml, plus the
 # unconditional guards CI runs in their own workflows (case-collision-check.yml,
-# lazy-deps-guard.yml, profile-artifact-check.yml).
+# lazy-deps-guard.yml, profile-artifact-check.yml, blob-size-check.yml).
 _GUARDS = {
     "footguns": ["scripts/check-windows-footguns.py", "--all"],
     "shebangs": ["scripts/check_bash_shebangs.py"],
     "no-tmp": ["scripts/check_no_tmp_literals.py"],
     "config-writers": ["scripts/check_config_yaml_writers.py"],
+    "config-readers": ["scripts/check_config_yaml_readers.py"],
     "os-marker-fakes": ["scripts/ci/check_os_marker_fakes.py"],
+    "agents-md": ["scripts/ci/check_agents_md_size.py"],
     "case-collisions": ["scripts/check-case-collisions.py"],
     "lazy-deps": ["scripts/ci/check_lazy_deps_imports.py"],
     "profile-archives": ["scripts/ci/check_profile_archive_boundary.py"],
 }
-_CHECKS = (*_GUARDS, "ruff", "health")
+# Guards that judge a diff, not a tree: they get the same base/head as the ratchet
+# (blob-size-check.yml).
+_DIFF_GUARDS = {"blob-size": ["scripts/ci/check_blob_size.py"]}
+_CHECKS = (*_GUARDS, *_DIFF_GUARDS, "ruff", "health")
 
 
 @dataclass
@@ -147,7 +157,10 @@ def _tree_snapshot(tree: str) -> Iterator[tuple[Path, dict[str, str]]]:
         env = {**os.environ, "GIT_DIR": git_dir, "GIT_WORK_TREE": str(root),
                "GIT_INDEX_FILE": str(Path(tmp) / "index")}
         _git_in(env, "read-tree", tree)
-        _git_in(env, "checkout-index", "-a")
+        # -f: on a case-insensitive filesystem paths that differ only by case are one file, and
+        # without it the second one aborts the snapshot before the case-collision guard runs
+        # (the guards read the index, which keeps both).
+        _git_in(env, "checkout-index", "-a", "-f")
         yield root, env
 
 
@@ -157,6 +170,11 @@ def _jobs(names: list[str], base: str | None, head: str | None,
     for name in names:  # built only when selected: `--only shebangs` needs no ruff
         if name in _GUARDS:
             jobs[name] = _Job([sys.executable, *_GUARDS[name]], root, env)
+        elif name in _DIFF_GUARDS:
+            argv = [sys.executable, *_DIFF_GUARDS[name]]
+            argv += ["--base", base] if base else []
+            argv += ["--head", head] if head else []
+            jobs[name] = _Job(argv, root, env)
         elif name == "ruff":
             jobs[name] = _Job([*resolve_ruff(root), "check", "."], root, env)
         else:
@@ -236,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scripts/check", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--only", help=f"comma list of: {', '.join(_CHECKS)}")
-    parser.add_argument("--base", help="base revision for the code-health ratchet")
+    parser.add_argument("--base", help="base revision for the code-health ratchet and blob-size")
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--staged", action="store_true",
                         help="check the index (what `git commit` records), not the working tree")

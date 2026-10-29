@@ -11,8 +11,11 @@ import ast
 import re
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
+import itertools
 
-_FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
+from scripts.code_health.py_ast import _FUNCS, Ctx, _call_name, _deferred_parts, _dotted, _eager
+from scripts.code_health.py_rules_sleep import wall_clock_sleep
+
 _CAPTURE_CALLS = {
     "get_hermes_home",
     "display_hermes_home",
@@ -36,11 +39,6 @@ _SHELL_IDENTITY = ("pgrep -f", "ps aux", "ps -ef", "ps -eo")
 
 
 @dataclass
-class Ctx:
-    known_env: set[str] = field(default_factory=set)
-
-
-@dataclass
 class _Scope:
     """One lexical scope's bindings: names an import binds, and names anything else binds."""
 
@@ -48,6 +46,28 @@ class _Scope:
     kind: str = "function"  # "module" | "class" | "function" | "comprehension"
     imports: dict[str, str] = field(default_factory=dict)
     others: set[str] = field(default_factory=set)
+    # Names a `global` / `nonlocal` statement hands to an outer scope: they bind nothing here.
+    declared: dict[str, str] = field(default_factory=dict)
+
+    def owner(self, name: str) -> _Scope:
+        """The scope that binds ``name`` for code in this one, following `global`/`nonlocal`."""
+        scope = self
+        while name in scope.declared:
+            if scope.declared[name] == "global":
+                while scope.parent is not None:
+                    scope = scope.parent
+                return scope
+            outer = scope.parent  # nonlocal: the nearest enclosing function that has it
+            while outer is not None and outer.parent is not None and (
+                    outer.kind == "class" or not outer.binds(name)):
+                outer = outer.parent
+            if outer is None or outer.parent is None:
+                return scope
+            scope = outer
+        return scope
+
+    def binds(self, name: str) -> bool:
+        return name in self.others or name in self.imports or name in self.declared
 
     def resolve(self, name: str) -> str | None:
         """Import target ``name`` means here: the innermost scope binding it decides, and a
@@ -56,6 +76,11 @@ class _Scope:
         scope: _Scope | None = self
         while scope is not None:
             if scope is self or scope.kind != "class":
+                if name in scope.declared:
+                    if name in scope.others:  # rebound before its outer binding was seen
+                        return None
+                    scope = scope.owner(name)
+                    return scope.imports.get(name) if name not in scope.others else None
                 if name in scope.others:
                     return None
                 if name in scope.imports:
@@ -71,13 +96,14 @@ class _Binder(ast.NodeVisitor):
         self.module = self.scope = _Scope(kind="module")
         self.loads: dict[int, _Scope] = {}
 
-    def _bind(self, name: str) -> None:
-        self.scope.others.add(name)
+    def _bind(self, name: str, scope: _Scope | None = None) -> None:
+        (scope or self.scope).owner(name).others.add(name)
 
     def _import(self, name: str, target: str) -> None:
-        if self.scope.imports.get(name, target) != target:
+        scope = self.scope.owner(name)
+        if scope.imports.get(name, target) != target:
             self._bind(name)
-        self.scope.imports[name] = target
+        scope.imports[name] = target
 
     def _enter(self, kind: str, nodes: Iterable[ast.AST]) -> None:
         outer, self.scope = self.scope, _Scope(self.scope, kind)
@@ -103,15 +129,12 @@ class _Binder(ast.NodeVisitor):
         else:
             self._bind(node.id)
 
+    # A declaration selects the outer binding; only an assignment through it rebinds that.
     def visit_Global(self, node: ast.Global) -> None:
-        self.scope.others.update(node.names)
-        self.module.others.update(node.names)
+        self.scope.declared.update(dict.fromkeys(node.names, "global"))
 
     def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
-        scope: _Scope | None = self.scope
-        while scope is not None and scope.kind != "module":
-            scope.others.update(node.names)
-            scope = scope.parent
+        self.scope.declared.update(dict.fromkeys(node.names, "nonlocal"))
 
     def generic_visit(self, node: ast.AST) -> None:
         # except-as, match captures and **rest bind a plain string attribute.
@@ -162,7 +185,7 @@ class _Binder(ast.NodeVisitor):
         scope = self.scope
         while scope.kind == "comprehension" and scope.parent is not None:
             scope = scope.parent
-        scope.others.add(node.target.id)
+        self._bind(node.target.id, scope)
         self.visit(node.value)
 
 
@@ -192,25 +215,6 @@ def canonical_tree(tree: ast.Module) -> ast.Module:
             return ast.copy_location(expr, node)
 
     return ast.fix_missing_locations(_Spell().visit(tree))
-
-
-def _dotted(node: ast.AST) -> str:
-    """``os.environ.get`` for an Attribute chain, ``""`` for anything else."""
-    parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        parts.append(node.id)
-        return ".".join(reversed(parts))
-    if isinstance(node, ast.Call):
-        inner = _dotted(node.func)
-        return ".".join([f"{inner}()", *reversed(parts)]) if inner else ""
-    return ""
-
-
-def _call_name(call: ast.Call) -> str:
-    return _dotted(call.func)
 
 
 def _str_arg(call: ast.Call, index: int = 0) -> str | None:
@@ -261,36 +265,6 @@ def _env_write_names(node: ast.AST) -> list[str]:
                 keys += [k.value for k in arg.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
         return keys
     return []
-
-
-def _deferred_parts(node: ast.AST) -> list[ast.AST] | None:
-    """For a node whose evaluation defers part of itself, the parts that run NOW; else None.
-
-    A lambda/def runs only its defaults and decorators when evaluated; a generator expression
-    runs only its first iterable (the element, conditions and later loops run on consumption).
-    Comprehensions and class bodies run immediately, so they are not deferred.
-    """
-    if isinstance(node, ast.Lambda):
-        return [d for d in (*node.args.defaults, *node.args.kw_defaults) if d is not None]
-    if isinstance(node, _FUNCS):
-        defaults = [d for d in (*node.args.defaults, *node.args.kw_defaults) if d is not None]
-        return [*node.decorator_list, *defaults]
-    if isinstance(node, ast.GeneratorExp):
-        return [node.generators[0].iter]
-    return None
-
-
-def _eager(node: ast.AST) -> Iterator[ast.AST]:
-    """Every node evaluated when ``node`` is evaluated (or a statement executes), root included."""
-    stack = [node]
-    while stack:
-        current = stack.pop()
-        parts = _deferred_parts(current)
-        if parts is not None:
-            stack.extend(parts)
-            continue
-        yield current
-        stack.extend(ast.iter_child_nodes(current))
 
 
 def _hermes_home_path(text: str, prefix: str = "") -> bool:
@@ -691,7 +665,7 @@ def _reaped_after_kill(tree: ast.Module, kinds: dict[int, str]) -> set[int]:
             stmts = getattr(node, field, None)
             if not isinstance(stmts, list):
                 continue
-            for first, second in zip(stmts, stmts[1:]):
+            for first, second in itertools.pairwise(stmts):
                 kill = first.value if isinstance(first, ast.Expr) else None
                 wait = second.value if isinstance(second, _WAIT_STATEMENTS) else None
                 if not (isinstance(kill, ast.Call) and isinstance(wait, ast.Call)):
@@ -710,9 +684,7 @@ def missing_timeout(tree: ast.Module, ctx: Ctx) -> Iterable[int]:
         if not isinstance(node, ast.Call) or id(node) in bounded:
             continue
         head, _, leaf = _call_name(node).rpartition(".")
-        if head == "subprocess" and leaf in _SUBPROCESS_WAITS and not _deadline(node):
-            yield node.lineno
-        elif leaf == "urlopen" and not _deadline(node, "timeout", 2):
+        if head == "subprocess" and leaf in _SUBPROCESS_WAITS and not _deadline(node) or leaf == "urlopen" and not _deadline(node, "timeout", 2):
             yield node.lineno
         elif leaf in _PROCESS_WAITS and id(node) in kinds:
             if kinds[id(node)] == "async" or not _deadline(node, "timeout", _PROCESS_WAITS[leaf]):
@@ -901,4 +873,5 @@ CHECKERS: dict[str, Callable[[ast.Module, Ctx], Iterable[int]]] = {
     "HX010": bool_of_env,
     "HX011": elif_ladder,
     "HX012": raw_thread,
+    "HX013": wall_clock_sleep,
 }

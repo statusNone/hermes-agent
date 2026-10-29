@@ -132,5 +132,5 @@ def test_cli_exec_remains_the_legacy_subprocess_handler(monkeypatch) -> None:
         "code": 7,
         "output": "legacy output",
     }
-    assert calls["argv"] == [server.sys.executable, "-m", "hermes_cli.main", "status"]
+    assert calls["argv"] == [server.sys.executable, "-P", "-m", "hermes_cli.main", "status"]
     assert calls["timeout"] == 12
