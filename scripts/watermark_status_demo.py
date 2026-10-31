@@ -63,7 +63,7 @@ def child(report, modern):
     socket.socket.connect = deny_network
     demo = WatermarkDemo(modern)
     idle = demo.snapshots[6]
-    active = demo.snapshots[:2]
+    active = tuple(demo.snapshots[i] for i in (0, 1, 3, 5, 7, 8, 9))
     values = ((12500, 25000, 15000), (25000, 25000, 15000),
               (30000, 25000, 15000), (12500, 50000, 20000))
     demo.snapshots = tuple(replace(idle, revision=i + 1,
@@ -88,7 +88,7 @@ def capture(evidence, width, modern):
     before = termios.tcgetattr(slave)
     env = {'PATH': os.environ.get('PATH', ''), 'TERM': 'xterm-256color',
            'LANG': 'C.UTF-8', 'HOME': str(path), 'HERMES_HOME': str(path / 'home'),
-           'TMPDIR': str(evidence)}
+           'TMPDIR': str(evidence), 'PYTHONDONTWRITEBYTECODE': '1'}
     command = [sys.executable, str(Path(__file__).resolve()), '--child', str(path / 'report.json')]
     if modern:
         command.append('--modern')
@@ -124,7 +124,7 @@ def capture(evidence, width, modern):
         observations = report['observations']
         assert all(o['focus'] and o['draft'] == 'keep my draft' and o['cursor'] == 5
                    for o in observations)
-        assert set(range(1, 7)) <= {o['revision'] for o in observations}
+        assert set(range(1, 12)) <= {o['revision'] for o in observations}
         assert any(not o['handle_present'] for o in observations), 'handle never detached'
         rows = [f['rows'][10] for f in frames if 'DEMO' in f['rows'][10]]
         assert rows
@@ -149,12 +149,16 @@ def capture(evidence, width, modern):
                 assert row.count('[') == 1, row
             verified[name] = row
         if width == 240:
-            for count, bar, percent in ((1, '##--------', 25), (3, '#######---', 75)):
+            for count, bar, percent in ((1, '██░░░░░░░░', 25), (3, '████████░░', 75)):
                 text = f'Index Indexing {count}/4 [{bar}] {percent}%'
                 matches = [row for row in rows if text in row and '~50% · low 15K' in row]
                 assert matches, (text, rows)
                 assert matches[0].count('[') == 2, matches[0]
                 verified[f'progress_{percent}'] = matches[0]
+            for label in ('Failed 3/8', 'Verifying 8/8', 'Stale', 'Unavailable', 'Unknown 2/?'):
+                matches = [row for row in rows if f'Index {label}' in row and '~50% · low 15K' in row]
+                assert matches, (label, rows)
+                verified[label] = matches[0]
         else:
             assert all('Index' not in row for row in rows)
         fallback = [row for row in rows if '25%' in row and

@@ -95,20 +95,29 @@ class CatchupSnapshot:
         return "Indexing"
 
 
-def indexing_text(snapshot):
-    """One complete ASCII segment. No compact variant, truncation or animation."""
+def indexing_fragments(cli, snapshot):
+    """Separate indexing values, using the stock context gauge and theme renderer."""
+    dim = "class:status-bar-dim"
     label = f"Index {snapshot.status}"
     if snapshot.status in {"Idle", "Stale", "Unavailable"}:
-        return label
+        return [(dim, label)]
     total = snapshot.known_total
     counts = f" {snapshot.published}/{total if total is not None else '?'}"
     if total is None:
-        return label + counts + " [??????????]"
+        return [(dim, label + counts + " [??????????]")]
     if snapshot.status == "Verifying":
-        return label + counts
-    filled = 10 * snapshot.published // total if total else 0
+        return [(dim, label + counts)]
     percent = 100 * snapshot.published // total if total else 0
-    return label + counts + f" [{('#' * filled) + ('-' * (10 - filled))}] {percent}%"
+    style = cli._status_bar_context_style(percent)
+    return [(dim, label + counts + " "),
+            (style, cli._build_context_bar(percent)), (dim, " "),
+            (style, f"{percent}%")]
+
+
+def indexing_text(snapshot):
+    """Plain counterpart, using the same pure stock formatters as the live footer."""
+    from hermes_cli.cli_status_bar_mixin import CLIStatusBarMixin
+    return "".join(value for _, value in indexing_fragments(CLIStatusBarMixin(), snapshot))
 
 
 class IndexingStatus:
@@ -192,8 +201,9 @@ def append_indexing_status(cli, fragments, width):
     snapshot = handle.snapshot() if handle is not None else None
     if snapshot is None:
         return fragments
-    text = " │ " + indexing_text(snapshot)
+    segment = [("class:status-bar-dim", " │ "), *indexing_fragments(cli, snapshot)]
     used = sum(cli._status_bar_display_width(value) for _, value in fragments)
-    if used + cli._status_bar_display_width(text) > width:
+    added = sum(cli._status_bar_display_width(value) for _, value in segment)
+    if used + added > width:
         return fragments
-    return [*fragments, ("class:status-bar-dim", text)]
+    return [*fragments, *segment]

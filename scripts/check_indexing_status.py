@@ -115,7 +115,7 @@ class ContractTests(unittest.TestCase):
                                 self.assertNotIn('Index ', text)
                             if 'Index ' in text:
                                 self.assertIn(indexing_text(state), text, (modern, width, title, vim, text))
-                                self.assertEqual(text.count(cli._build_context_bar(25)), 1)
+                                self.assertEqual(text.split('Index ', 1)[0].count(cli._build_context_bar(25)), 1)
                 cli._indexing_status.close()
 
 
@@ -277,7 +277,7 @@ class PtyTests(unittest.TestCase):
             full_frames = [f for f in frames if f['width'] == 240 and 'DEMO' in f['rows'][10]]
             for frame in full_frames:
                 row = frame['rows'][10]
-                self.assertEqual(row.count(StockRenderer()._build_context_bar(25)), 1)
+                self.assertEqual(row.split('Index ', 1)[0].count(StockRenderer()._build_context_bar(25)), 1)
                 self.assertFalse(any('Index ' in r for r in frame['rows'][:10] + frame['rows'][11:]))
             if absent:
                 self.assertTrue(full_frames)

@@ -93,6 +93,27 @@ class WatermarkTests(unittest.TestCase):
                     if width < 76:
                         self.assertNotIn('Index', text)
 
+    def test_index_gauge_reuses_stock_glyphs_width_and_theme(self):
+        with renderer_facade():
+            for modern in (False, True):
+                for published, percent in ((1, 25), (2, 50), (3, 75)):
+                    cli, state = self.make_renderer(modern=modern)
+                    progress = replace(demo_snapshots()[0], revision=8,
+                        published=published, pending=3-published,
+                        rolling_context=state.rolling_context)
+                    cli._indexing_status.update(progress)
+                    fragments = cli._get_status_bar_fragments()
+                    text = ''.join(v for _, v in fragments)
+                    self.assertIn('~50% · low 15K', text)
+                    self.assertIn(f'Index Indexing {published}/4', text)
+                    bars = [(s, v) for s, v in fragments if v.startswith('[')]
+                    background = ' bg:default' if modern else ''
+                    self.assertEqual(bars, [
+                        (cli._status_bar_context_style(50) + background, cli._build_context_bar(50)),
+                        (cli._status_bar_context_style(percent) + background, cli._build_context_bar(percent))])
+                    self.assertTrue(all(cli._status_bar_display_width(v) == 12 for _, v in bars))
+                    self.assertNotIn('#', text)
+
     def test_scope_revision_and_invalid_data(self):
         cli, state = self.make_renderer()
         for field in ('profile', 'session', 'generation'):

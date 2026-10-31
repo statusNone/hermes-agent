@@ -3,7 +3,13 @@
 The existing owner-scoped `CatchupSnapshot` optionally carries a
 `RollingContextSnapshot`. It replaces only the stock context-detail / context-percent
 segments in classic, modern and plain renderers. Other field selection, ordering,
-width tiers, clipping, title placement and the independent Index segment are unchanged.
+width tiers, clipping and title placement are unchanged. The independent Index
+progress segment reuses the stock `_build_context_bar` (ten █/░ cells) and
+`_status_bar_context_style` theme classes, just like the watermark gauge.
+Index counters, integer percent and state decisions remain separate and unchanged;
+only fill rounding now follows the stock renderer (75% fills eight cells).
+Caught-up is still `Index Idle`; failure, unknown, stale, unavailable and verifying
+labels retain their existing meaning. Unknown has no invented percentage.
 No plugin / missing snapshot / inactive rolling / cleared or closed owner uses stock
 rendering. Under 52 cells the stock tier omits context; 52–75 shows the percentage
 against `high` and `low` without a gauge. At 76+ the normal detail and gauge slots
@@ -33,7 +39,8 @@ Bounded offline demo (existing interpreter; no install or live Hermes startup):
 python scripts/watermark_status_demo.py --evidence /absolute/scratch/watermarks
 ```
 
-Synthetic states exercise below/at/above high, changed low/high and stock fallback
+Synthetic states exercise below/at/above high, changed low/high, matching independent
+index gauges, failure/unknown states and stock fallback
 in actual classic/modern PTYs at 240 and 60 cells. Outputs: `terminal.ansi`,
 `frames.json`, `screens.txt`, lifecycle `report.json`, and `summary.json`. The
 harness denies socket connections, requires preserved draft/focus/cursor and
