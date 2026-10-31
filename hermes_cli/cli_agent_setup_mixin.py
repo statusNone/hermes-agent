@@ -246,6 +246,8 @@ def _retire_agent(cli) -> None:
     """Drop ``cli.agent`` so the next turn rebuilds it, releasing its LLM clients first: the Codex
     app-server child (and MCP descendants) belongs to the instance, so ``self.agent = None`` alone
     orphans it for the CLI process lifetime (#72548). Session tool state is kept (soft release)."""
+    from hermes_cli.cli_context_status import detach_context_status
+    detach_context_status(cli)
     agent = cli.agent
     if agent is not None and hasattr(agent, "release_clients"):
         agent.release_clients()
@@ -647,6 +649,8 @@ class CLIAgentSetupMixin:
         Returns True on success."""
         from cli import ChatConsole, _cprint, logger
         from hermes_cli.gateway_agent import GatewayAgent as AIAgent  # the gateway runs the turn
+        if self.config.get('context', {}).get('local_cli'):
+            from hermes_cli.cli_context_status import local_context_agent as AIAgent
         if self.agent is not None:
             return True
 
@@ -746,6 +750,8 @@ class CLIAgentSetupMixin:
             # ``cli._active_agent_ref`` None forever — so memory shutdown never ran on /exit (#49287).
             import cli as _cli
             _cli._active_agent_ref = self.agent
+            from hermes_cli.cli_context_status import attach_context_status
+            attach_context_status(self)
             self.agent.control_update_callback = self._mark_automation_stale
             # Seed the agent's once-per-lifecycle auto_load cache with the bytes the preload
             # thread rendered, so the shared prompt path never re-reads config or skill files.

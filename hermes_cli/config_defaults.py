@@ -1286,6 +1286,8 @@ DEFAULT_CONFIG = {
     # plugins/context_engine/<name>/ or ~/.hermes/plugins/.
     "context": {
         "engine": "compressor",
+        "required": False,  # opt-in terminal admission; bounded text OpenAI route
+        "local_cli": False,  # isolated in-process classic CLI; requires required=true
         # Return freed glibc pages at agent/TUI cleanup boundaries (no-op elsewhere).
         "memory_trim": {
             "enabled": True,

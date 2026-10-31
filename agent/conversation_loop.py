@@ -1355,6 +1355,12 @@ def _apply_context_engine_selection(
     """Run the optional per-turn ``ContextEngine.select_context()`` hook, fail-open: any
     exception or invalid return yields ``api_messages`` unchanged; history is never mutated."""
     engine = getattr(agent, "context_compressor", None)
+    if getattr(agent, "_context_engine_required", False):
+        from agent.context_admission import select_required
+        selected = select_required(agent, [_clone_message_for_send(m) for m in api_messages],
+                                   [_clone_message_for_send(m) for m in conversation_messages],
+                                   _clone_message_for_send(incoming_message) if incoming_message else None)
+        return [without_persistence_fields(m) for m in selected]
     if not _engine_overrides_hook(engine, "select_context"):
         return api_messages
 
@@ -1731,7 +1737,12 @@ def _run_conversation_turn(
         if _run_phase(begin_iteration, agent, s).action == "break":
             break
         _run_phase(prepare_iteration, agent, s)
-        _run_phase(assemble_api_request, agent, s)
+        from agent.context_admission import ContextAdmissionError
+        try:
+            _run_phase(assemble_api_request, agent, s)
+        except ContextAdmissionError as e:
+            _run_phase(handle_outer_loop_error, agent, s, e=e)
+            break
         _pg = _run_phase(run_preflight_gate, agent, s)
         if _pg.action == "return":
             return _pg.result
@@ -1745,7 +1756,11 @@ def _run_conversation_turn(
         s._retry, s.finish_reason, s.response, s.api_kwargs = TurnRetryState(), "stop", None, None
         s.api_request_id = agent._current_api_request_id = f"{s.turn_id}:api:{s.api_call_count}"
 
-        early_result = _run_api_retry_loop(agent, s)
+        try:
+            early_result = _run_api_retry_loop(agent, s)
+        except ContextAdmissionError as e:
+            _run_phase(handle_outer_loop_error, agent, s, e=e)
+            break
         if early_result is not None:
             return early_result
 

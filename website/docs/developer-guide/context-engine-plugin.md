@@ -6,6 +6,26 @@ description: "How to build a context engine plugin that replaces the built-in Co
 
 # Building a Context Engine Plugin
 
+## Isolated required-engine admission (opt-in)
+
+`context.required: true` forbids startup fallback and makes missing, invalid or
+failed selection terminal rather than fail-open. The host binds its native
+clarify callback around selection. Final dispatch validates the resolved payload
+after middleware, before transport; local admission errors bypass retries and
+fallbacks. Legacy/noncritical engines retain the default contract below.
+
+This bounded implementation supports only OpenAI/custom text Chat Completions,
+explicit maximum output, and no tools/media/enabled reasoning. Unsupported
+fields/routes fail closed. JSON UTF-8 bytes plus actual output and a fixed/per-row
+framing allowance must fit the model and optional engine `admission_ceiling`.
+It is not exact tokenization or all-provider certification. Engines must still
+enforce publication-before-eviction themselves.
+
+`context.local_cli: true` selects an isolated in-process classic CLI using
+SessionDB/AIAgent instead of the gateway proxy; it requires `required: true`.
+Gateway-only route overrides are unsupported. This does not implement a remote
+gateway/viewer bridge or authorize providers. Both options default false.
+
 Context engine plugins replace the built-in `ContextCompressor` with an alternative strategy for managing conversation context. For example, a Lossless Context Management (LCM) engine that builds a knowledge DAG instead of lossy summarization.
 
 ## How it works

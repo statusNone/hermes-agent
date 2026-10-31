@@ -1155,6 +1155,13 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
         re-entry (quick-command alias, prefix expansion) so the user's command is counted once."""
         cmd_lower = command.lower().strip()  # lowercase only for matching; args keep their case
         cmd_original = command.strip()
+        engine = getattr(getattr(self, 'agent', None), 'context_compressor', None)
+        handler = getattr(engine, 'handle_cli_command', None)
+        if callable(handler):
+            answer = handler(cmd_original)
+            if answer is not None:
+                self._console_print(str(answer))
+                return True
 
         # Aliases resolve via the central registry (hermes_cli/commands.py).
         from hermes_cli.commands import resolve_command as _resolve_cmd
@@ -1421,6 +1428,8 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
         from hermes_cli.observability.shared_metrics_startup import cli_prompt_ready_handler
         app.after_render += cli_prompt_ready_handler()
         self._app = app
+        from hermes_cli.cli_context_status import attach_context_status
+        attach_context_status(self)
 
         # Ghost status-bar lines on resize: pt's renderer scrolls the terminal after each
         # paint, pushing chrome into scrollback where a column-shrink reflows it into
@@ -1505,6 +1514,8 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
                 raise
         finally:
             # A resize right before exit leaves its recovery (and the paints it held) unrun.
+            from hermes_cli.cli_context_status import detach_context_status
+            detach_context_status(self)
             _release_paints()
             self._tui_shutdown()
 

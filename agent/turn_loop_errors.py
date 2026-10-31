@@ -52,6 +52,12 @@ def handle_outer_loop_error(
             _turn_exit_reason=_turn_exit_reason, failed=failed, final_response=final_response,
         )
 
+    from agent.context_admission import ContextAdmissionError
+    if isinstance(e, ContextAdmissionError):
+        _turn_exit_reason, failed, final_response = "context_admission_refused", True, str(e)
+        agent._emit_warning(final_response)
+        return _verdict("break")
+
     # Count every escaped exception before classification so permanent failures
     # terminate even with an unlimited turn budget.
     _outer_error_count += 1
