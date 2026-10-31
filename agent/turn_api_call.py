@@ -91,6 +91,12 @@ def perform_api_call(
     _use_streaming = _should_stream(agent)
 
     def _perform_api_call(next_api_kwargs):
+        # Strip the durable flush marker only on outbound copies, never from
+        # the live transcript (doing so can re-insert restored rows).
+        if getattr(agent, '_context_engine_required', False) and 'messages' in next_api_kwargs:
+            next_api_kwargs = dict(next_api_kwargs, messages=[
+                {k: v for k, v in m.items() if k != '_db_persisted'}
+                for m in next_api_kwargs['messages']])
         from agent.context_admission import admit_request
         admit_request(agent, next_api_kwargs)
         if agent.api_mode == "codex_responses":
