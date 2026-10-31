@@ -1884,9 +1884,7 @@ def _compressor_max_tokens(agent):
 
 def _build_context_engine(agent, _agent_cfg, cs, _custom_providers, _effective_context_length, session_db):
     agent._context_engine_required = (_agent_cfg.get("context", {}) or {}).get("required", False) is True
-    if agent._context_engine_required and (agent.provider not in {'openai', 'custom'} or agent.api_mode != 'chat_completions'):
-        from agent.context_admission import ContextAdmissionError
-        raise ContextAdmissionError('Required context supports only text OpenAI-compatible Chat Completions')
+
     _selected_engine = _select_context_engine(_agent_cfg)
     if _selected_engine is not None:
         agent.context_compressor = _selected_engine
