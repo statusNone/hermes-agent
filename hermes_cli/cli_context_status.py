@@ -25,6 +25,8 @@ def detach_context_status(cli):
 
 
 def attach_context_status(cli):
+    if getattr(cli, 'config', {}).get('display', {}).get('indexing_status') is False:
+        return
     agent = getattr(cli, 'agent', None)
     engine = getattr(agent, 'context_compressor', None)
     if not getattr(cli, '_app', None) or not callable(getattr(engine, 'attach_indexing_status', None)):

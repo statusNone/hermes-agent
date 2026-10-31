@@ -1,9 +1,4 @@
-"""Opt-in terminal admission for required context engines.
-
-Legacy selection stays fail-open. The bounded critical envelope is text-only
-OpenAI Chat Completions; unsupported routes fail closed rather than guessing.
-"""
-import json
+"""Typed selection veto for required engines; provider budgets belong to Hermes."""
 from contextlib import nullcontext
 
 
@@ -35,44 +30,8 @@ def select_required(agent, messages, conversation, incoming):
 
 
 def admit_request(agent, payload):
-    """Check the resolved request after middleware, on every physical dispatch path.
-
-    UTF-8 JSON bytes upper-bound controlled text tokens, with a framing margin
-    and the actual output limit. This is not arbitrary-provider certification.
-    """
+    """Keep cancellation terminal on retries without imposing a wire envelope."""
     if not getattr(agent, "_context_engine_required", False):
         return
     if getattr(agent, "_interrupt_requested", False):
         raise ContextAdmissionError("Context admission refused: cancelled before dispatch.")
-    if agent.provider not in {"openai", "custom"} or agent.api_mode != "chat_completions":
-        raise ContextAdmissionError(f"Critical context supports only OpenAI text Chat Completions, got {agent.provider}/{agent.api_mode}.")
-    payload = {k: v for k, v in payload.items() if k != 'timeout'}  # SDK transport option, not JSON
-    if 'reasoning_effort' in payload and payload['reasoning_effort'] != 'none':
-        raise ContextAdmissionError('Critical context does not support enabled reasoning')
-    allowed = {"model", "messages", "max_tokens", "max_completion_tokens", "temperature", "top_p", "stream", "stream_options", "reasoning_effort"}
-    if set(payload) - allowed:
-        raise ContextAdmissionError("Critical context: unsupported request fields " + repr(sorted(set(payload) - allowed)) + "; no send.")
-    messages = payload.get("messages", [])
-    if not messages or any(m.get("role") not in {"system", "user", "assistant"}
-            or not isinstance(m.get("content"), str) or set(m) - {"role", "content"} for m in messages):
-        raise ContextAdmissionError("Critical context: only plain text messages are supported.")
-    output = payload.get("max_completion_tokens", payload.get("max_tokens"))
-    native = None
-    if getattr(agent, "_context_native_output", None) is not None:
-        from agent.context_native_output import native_output_for_request
-        native = native_output_for_request(agent, payload)
-        output = native.output_tokens
-    elif type(output) is not int or output <= 0:
-        raise ContextAdmissionError("Critical context requires an explicit positive output limit or resolved native output metadata.")
-    engine = agent.context_compressor
-    ceiling = min(engine.context_length, getattr(engine, "admission_ceiling", engine.context_length))
-    if native is not None:
-        ceiling = min(ceiling, native.context_length)
-    measured = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode())
-    # Explicit per-message framing plus fixed SDK envelope allowance. No tools,
-    # media, reasoning, extra bodies or alternate adapters enter this envelope.
-    overhead = 1024 + 32 * len(messages)
-    if measured + output + overhead > ceiling:
-        raise ContextAdmissionError("Context admission refused: serialized request plus output exceeds hard ceiling.")
-    agent._context_admission_receipt = dict(request_bytes=measured, output=output,
-                                            overhead=overhead, ceiling=ceiling)
