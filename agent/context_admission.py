@@ -57,10 +57,17 @@ def admit_request(agent, payload):
             or not isinstance(m.get("content"), str) or set(m) - {"role", "content"} for m in messages):
         raise ContextAdmissionError("Critical context: only plain text messages are supported.")
     output = payload.get("max_completion_tokens", payload.get("max_tokens"))
-    if type(output) is not int or output <= 0:
-        raise ContextAdmissionError("Critical context requires an explicit positive output limit.")
+    native = None
+    if getattr(agent, "_context_native_output", None) is not None:
+        from agent.context_native_output import native_output_for_request
+        native = native_output_for_request(agent, payload)
+        output = native.output_tokens
+    elif type(output) is not int or output <= 0:
+        raise ContextAdmissionError("Critical context requires an explicit positive output limit or resolved native output metadata.")
     engine = agent.context_compressor
     ceiling = min(engine.context_length, getattr(engine, "admission_ceiling", engine.context_length))
+    if native is not None:
+        ceiling = min(ceiling, native.context_length)
     measured = len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode())
     # Explicit per-message framing plus fixed SDK envelope allowance. No tools,
     # media, reasoning, extra bodies or alternate adapters enter this envelope.
