@@ -20,6 +20,26 @@ class IndexingScope:
 
 
 @dataclass(frozen=True)
+class RollingContextSnapshot:
+    """Latest selected, pre-recall occupancy in canonical estimated tokens.
+
+    High is a soft rolling watermark, not the provider context limit. This is
+    sampled at selection, not recomputed on repaint or substituted with usage.
+    Ownership and freshness use the enclosing CatchupSnapshot's scope/revision.
+    """
+    current: int
+    high: int
+    low: int
+
+    def __post_init__(self):
+        if any(type(v) is not int or not 0 <= v <= 10**12
+               for v in (self.current, self.high, self.low)):
+            raise ValueError("rolling tokens must be bounded nonnegative integers")
+        if not 0 < self.low < self.high:
+            raise ValueError("rolling requires 0 < low < high")
+
+
+@dataclass(frozen=True)
 class CatchupSnapshot:
     """Current logical source/version work, NOT lifetime counts or attempts.
 
@@ -37,8 +57,11 @@ class CatchupSnapshot:
     failed: int = 0
     health: str = "live"
     authoritative_complete: bool = False
+    rolling_context: RollingContextSnapshot | None = None
 
     def __post_init__(self):
+        if self.rolling_context is not None and not isinstance(self.rolling_context, RollingContextSnapshot):
+            raise ValueError("expected RollingContextSnapshot or None")
         if not isinstance(self.scope, IndexingScope):
             raise ValueError("expected explicit IndexingScope")
         counters = (self.revision, self.published, self.pending, self.inflight, self.failed)
