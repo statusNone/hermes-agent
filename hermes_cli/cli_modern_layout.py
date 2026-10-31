@@ -374,6 +374,9 @@ def _status_line_fragments(cli) -> list:
         used_left += 3 + cli._status_bar_display_width(cwd)
     if right and used_left + used_right + 2 > width:
         right, used_right = [], 0
+    from hermes_cli.cli_indexing_status import append_indexing_status
+    left = append_indexing_status(cli, left, width - used_right - (2 if right else 0))
+    used_left = sum(cli._status_bar_display_width(text) for _, text in left)
     pad = [("", " " * max(1, width - used_left - used_right - 1))] if right else []
     return _no_bg(_fit(cli, left + pad + right + ([("", " ")] if right else []), width))
 

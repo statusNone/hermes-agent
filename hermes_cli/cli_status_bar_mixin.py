@@ -1126,6 +1126,10 @@ class CLIStatusBarMixin:
                 text = f"{parts[0]} │ " + " · ".join(parts[1:]) if battery_label else " · ".join(parts)
             else:
                 text = (" · " if width < 76 else " │ ").join(parts)
+            from hermes_cli.cli_indexing_status import append_indexing_status
+            placed = self._status_title_badge(session_title, width)
+            budget = placed[1] if placed else width
+            text = "".join(value for _, value in append_indexing_status(self, [("", text)], budget))
             return self._right_align_status_title(text, session_title, width)
         except Exception:
             return f"☤ {self.model if getattr(self, 'model', None) else 'Hermes'}"
@@ -1173,8 +1177,13 @@ class CLIStatusBarMixin:
                 battery_style = self._battery_status_style(snapshot.get("battery_category", "dim"))
                 frags[0:0] = [(_SB, " "), (battery_style, battery_label), (_DIM, " │")]
 
-            frags = self._right_align_status_title_fragments(frags, session_title, width)
             vim_label = self._vim_mode_label()
+            from hermes_cli.cli_indexing_status import append_indexing_status
+            placed = self._status_title_badge(session_title, width)
+            budget = placed[1] if placed else width
+            budget -= self._status_bar_display_width(f" │ {vim_label} ") if vim_label else 0
+            frags = append_indexing_status(self, frags, budget)
+            frags = self._right_align_status_title_fragments(frags, session_title, width)
             if vim_label:
                 frags.extend([(_DIM, " │ "), (_STRONG, vim_label), (_SB, " ")])
             total_width = sum(self._status_bar_display_width(text) for _, text in frags)
