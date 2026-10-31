@@ -340,7 +340,10 @@ engine's `compress()` with `force=True` and the optional focus topic, never the 
 compressor. Once the compacted history is committed, the engine receives
 `on_session_start(session_id, boundary_reason="compression", old_session_id=...)` (the same id
 twice for in-place compaction). A session with no live agent may get a fresh engine instance
-for that compression, which then also receives `on_session_end()`.
+for that compression, which then also receives `on_session_end()`. In-place compaction
+of a live agent checkpoints memory extraction without calling the context engine's
+`on_session_end()`: same-session observers and ingestion retain ownership. Actual
+session rotation and terminal teardown still deliver the session-end hook.
 
 ## Configuration
 

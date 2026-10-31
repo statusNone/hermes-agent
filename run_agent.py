@@ -878,12 +878,13 @@ class AIAgent(
             _quietly(lambda: self._memory_manager.shutdown_all())
         _notify_context_engine_session_end(self, messages)
 
-    def commit_memory_session(self, messages: list | None = None) -> None:
-        """Flush end-of-session extraction on session_id rotation (/new, compression) without tearing providers
-        down."""
+    def commit_memory_session(self, messages: list | None = None, *, end_context_session: bool = True) -> None:
+        """Extract memory without tearing providers down. In-place compaction checkpoints memory but does
+        not end the live context engine's session; rotation/eviction callers retain terminal semantics."""
         if self._memory_manager:
             _quietly(lambda: self._memory_manager.on_session_end(messages or []))
-        _notify_context_engine_session_end(self, messages)
+        if end_context_session:
+            _notify_context_engine_session_end(self, messages)
 
     def _sync_external_memory_for_turn(self, *, original_user_message: Any, final_response: Any, interrupted: bool,
                                        messages: list | None = None) -> None:

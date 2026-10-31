@@ -44,6 +44,21 @@ def test_commit_memory_session_notifies_context_engine():
     ctx.on_session_end.assert_called_once_with("sess-42", msgs)
 
 
+def test_in_place_checkpoint_keeps_context_owner_until_shutdown():
+    from run_agent import AIAgent
+
+    mm, ctx = MagicMock(), MagicMock()
+    agent = _make_minimal_agent(mm, ctx)
+    agent.shutdown_memory_provider = AIAgent.shutdown_memory_provider.__get__(agent)
+    msgs = [{"role": "user", "content": "checkpoint"}]
+    agent.commit_memory_session(msgs, end_context_session=False)
+    mm.on_session_end.assert_called_once_with(msgs)
+    ctx.on_session_end.assert_not_called()
+    agent.shutdown_memory_provider(msgs)
+    agent.shutdown_memory_provider(msgs)
+    ctx.on_session_end.assert_called_once_with("abc", msgs)
+
+
 
 
 

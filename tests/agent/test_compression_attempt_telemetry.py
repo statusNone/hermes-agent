@@ -42,7 +42,7 @@ class _Agent:
     def _build_system_prompt(self, system_message):
         return system_message
 
-    def commit_memory_session(self, _messages):
+    def commit_memory_session(self, _messages, *, end_context_session=True):
         pass
 
 
