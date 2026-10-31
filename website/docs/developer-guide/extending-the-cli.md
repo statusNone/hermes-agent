@@ -6,6 +6,19 @@ description: "Build wrapper CLIs that extend the Hermes TUI with custom widgets,
 
 # Extending the CLI
 
+## Optional local context-engine status
+
+The isolated `context.local_cli` route can attach an engine implementing
+`attach_indexing_status(handle)` / `detach_indexing_status()`. The host creates a
+fresh profile/session/generation-scoped `cli_indexing_status` handle after app
+construction and closes it on retire/shutdown. The producer updates immutable
+snapshots off the render thread; only authoritative published completion is
+Idle. The existing stock status row omits the entire optional segment when it
+does not fit, without hiding required clarify/warning UI. No extra gauge or row.
+`handle_cli_command(command)` may return text for an engine-specific local
+command, or None to continue ordinary dispatch. The producer owns bounded worker
+cleanup and publication truth. This seam does not transport gateway state.
+
 Hermes exposes protected extension hooks on `HermesCLI` so wrapper CLIs can add widgets, keybindings, and layout customizations without overriding the `run()` method or the TUI construction in `hermes_cli/cli_tui_mixin.py` (where these hooks are defined; `HermesCLI` in `cli.py` mixes it in). This keeps your extension decoupled from internal changes.
 
 ## Extension points

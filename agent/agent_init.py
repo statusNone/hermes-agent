@@ -1805,12 +1805,21 @@ def _select_context_engine(_agent_cfg):
     general plugin system → None (built-in ContextCompressor)."""
     from agent.safe_worker_policy import safe_worker_enabled
 
+    required = (_agent_cfg.get("context", {}) or {}).get("required", False)
+    if type(required) is not bool:
+        raise ValueError('context.required must be boolean')
+    if required and safe_worker_enabled():
+        from agent.context_admission import ContextAdmissionError
+        raise ContextAdmissionError("Required context engine unavailable in safe-worker mode")
     if safe_worker_enabled():
         return None
     _engine_name = "compressor"
     with suppress(Exception):
         _ctx_cfg = _agent_cfg.get("context", {}) if isinstance(_agent_cfg, dict) else {}
         _engine_name = _ctx_cfg.get("engine", "compressor") or "compressor"
+    if required and _engine_name == "compressor":
+        from agent.context_admission import ContextAdmissionError
+        raise ContextAdmissionError("context.required needs an explicitly selected plugin engine")
     if _engine_name == "compressor":
         return None  # built-in; don't auto-activate plugins
     _selected_engine = None
@@ -1845,6 +1854,9 @@ def _select_context_engine(_agent_cfg):
                     _engine_name, _copy_err,
                 )
 
+    if required and _selected_engine is None:
+        from agent.context_admission import ContextAdmissionError
+        raise ContextAdmissionError("Required context engine failed to start; no fallback permitted")
     if _selected_engine is None and not _copy_failed:
         _ra().logger.warning(
             "Context engine '%s' not found — falling back to built-in compressor", _engine_name
@@ -1871,6 +1883,10 @@ def _compressor_max_tokens(agent):
 
 
 def _build_context_engine(agent, _agent_cfg, cs, _custom_providers, _effective_context_length, session_db):
+    agent._context_engine_required = (_agent_cfg.get("context", {}) or {}).get("required", False) is True
+    if agent._context_engine_required and (agent.provider not in {'openai', 'custom'} or agent.api_mode != 'chat_completions'):
+        from agent.context_admission import ContextAdmissionError
+        raise ContextAdmissionError('Required context supports only text OpenAI-compatible Chat Completions')
     _selected_engine = _select_context_engine(_agent_cfg)
     if _selected_engine is not None:
         agent.context_compressor = _selected_engine

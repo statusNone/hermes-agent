@@ -79,6 +79,10 @@ def handle_api_error(
     if agent.thinking_callback:
         agent.thinking_callback("")
 
+    from agent.context_admission import ContextAdmissionError
+    if isinstance(api_error, ContextAdmissionError):
+        raise api_error  # terminal local refusal; never provider recovery/fallback
+
     _recovered, active_system_prompt = recover_before_classification(
         agent, api_error, messages=messages, api_messages=api_messages, api_kwargs=api_kwargs,
         active_system_prompt=active_system_prompt,

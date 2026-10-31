@@ -144,7 +144,7 @@ class Screen:
                     break
                 self.pending = text[match.end():]
                 params, _intermediate, command = match.groups()
-                values = [int(v or 0) for v in params.lstrip('?>').split(';')]
+                values = [int(v or 0) for v in params.lstrip('?<>').split(';')]
                 n = values[0] or 1
                 if command in 'Hf':
                     self.y, self.x = n - 1, (values[1] or 1) - 1 if len(values) > 1 else 0

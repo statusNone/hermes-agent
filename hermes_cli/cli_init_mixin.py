@@ -420,6 +420,12 @@ class CLIInitMixin:
         """Open the session store early (so /title works before the first message)."""
         self._session_db = None
         self._session_db_unavailable = False
+        if self.config.get('context', {}).get('local_cli'):
+            if self.config.get('context', {}).get('required') is not True:
+                raise ValueError('context.local_cli requires context.required=true')
+            from hermes_state import SessionDB
+            self._session_db = SessionDB()
+            return
         try:
             # Registry handle, not a bare SessionDB(): goals/loops/heartbeat acquire the same
             # path a moment later from the REPL thread, and a second writer repeats the full
