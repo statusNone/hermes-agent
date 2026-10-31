@@ -1024,6 +1024,14 @@ class CLIStatusBarMixin:
         duration_label = snapshot["duration"]
         goal_segment = self._status_bar_goal_segment(snapshot)
         focus_label = snapshot.get("focus_label") or ""
+        handle = getattr(self, "_indexing_status", None)
+        contribution = handle.snapshot() if handle is not None else None
+        rolling = contribution.rolling_context if contribution is not None else None
+        if rolling is not None:
+            # Display-only replacement; never change the host's provider accounting.
+            snapshot = dict(snapshot, context_tokens=rolling.current, context_length=rolling.high,
+                            context_percent=round(100 * rolling.current / rolling.high),
+                            context_estimated=True, context_pinned=False)
 
         def _ok(name: str) -> bool:
             return field_set is None or name in field_set
@@ -1052,18 +1060,23 @@ class CLIStatusBarMixin:
             percent = snapshot["context_percent"]
             mark = "~" if snapshot.get("context_estimated") else ""
             percent_label = f"{mark}{percent}%" if percent is not None else "--"
+            if rolling is not None:
+                high_label = "" if wide and _ok("context_detail") else " high"
+                percent_label += f"{high_label} · low {format_token_count_compact(rolling.low)}"
             if wide and _ok("context_detail"):
                 if snapshot["context_length"]:
                     ctx_total = _format_context_length(snapshot["context_length"])
                     ctx_used = format_token_count_compact(snapshot["context_tokens"])
                     pin = t("cli.status_bar.ctx_pinned") if snapshot.get("context_pinned") else ""
                     context_label = f"{mark}{ctx_used}/{ctx_total}{pin}"
+                    if rolling is not None:
+                        context_label = f"~{ctx_used}/{format_token_count_compact(rolling.high)} high"
                 else:
                     context_label = t("cli.status_bar.ctx_unknown")
                 segs.append([(_DIM, context_label)])
             if _ok("context_pct"):
                 bar_style = self._status_bar_context_style(percent)
-                if wide and styled:
+                if wide and (styled or rolling is not None):
                     segs.append([
                         (bar_style, self._build_context_bar(percent)), (_DIM, " "), (bar_style, percent_label),
                     ])
