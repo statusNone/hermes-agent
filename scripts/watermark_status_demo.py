@@ -23,7 +23,7 @@ import time
 
 from indexing_status_demo import IndexingDemo
 from check_indexing_status import Screen
-from hermes_cli.cli_indexing_status import RollingContextSnapshot
+from hermes_cli.cli_indexing_status import RollingContextSnapshot, RollingDisplaySnapshot
 
 
 def deny_network(*args, **kwargs):
@@ -66,11 +66,17 @@ def child(report, modern):
     active = tuple(demo.snapshots[i] for i in (0, 1, 3, 5, 7, 8, 9))
     values = ((12500, 25000, 15000), (25000, 25000, 15000),
               (30000, 25000, 15000), (12500, 50000, 20000))
+    displays = (RollingDisplaySnapshot(0, '9:00 AM'),
+                RollingDisplaySnapshot(1, '10:30 AM'),
+                # A later selected-context repaint is not another commit.
+                RollingDisplaySnapshot(1, '10:30 AM'),
+                RollingDisplaySnapshot(2, '10:45 AM'))
     demo.snapshots = tuple(replace(idle, revision=i + 1,
-        rolling_context=RollingContextSnapshot(*value))
+        rolling_context=RollingContextSnapshot(*value), rolling_display=displays[i])
         for i, value in enumerate(values)) + tuple(
             replace(snapshot, revision=i + 5,
-                    rolling_context=RollingContextSnapshot(*values[0]))
+                    rolling_context=RollingContextSnapshot(*values[0]),
+                    rolling_display=displays[-1])
             for i, snapshot in enumerate(active))
     demo.handle.update(demo.snapshots[0])
     report.write_text(json.dumps(demo.run(0.3), indent=2))
@@ -130,8 +136,8 @@ def capture(evidence, width, modern):
         assert rows
         assert all(get_cwidth(row) <= width for row in rows)
         verified = {}
-        for name, percent, low in (('below', 50, 15), ('at', 100, 15),
-                                   ('above', 120, 15), ('changed', 25, 20)):
+        for name, percent, low, committed in (('below', 50, 15, 0), ('at', 100, 15, 1),
+                                              ('above', 120, 15, 1), ('changed', 25, 20, 2)):
             text = (f'~{percent}% · low {low}K' if width == 240 else
                     f'~{percent}% high · low {low}K')
             matches = [row for row in rows if text in row and
@@ -139,16 +145,21 @@ def capture(evidence, width, modern):
             assert matches, (name, text, rows)
             row = matches[0]
             if width == 60:
-                assert row.startswith(f' ☤ DEMO · {text} · 2m'), row
+                assert row.startswith(f' ☤ DEMO · {text} · ⋈ '), row
                 assert '[' not in row, 'stock compact tier must omit the bar'
                 if modern:
                     assert ' · …' in row, 'stock path clipping missing'
                 else:
-                    assert row == f' ☤ DEMO · {text} · 2m', row
+                    assert row == f' ☤ DEMO · {text} · ⋈ {committed} · 2m', row
             else:
                 assert row.count('[') == 1, row
             verified[name] = row
         if width == 240:
+            committed_rows = [row for row in rows if '⋈ ' in row and '@' in row]
+            assert any('⋈ 0 @9:00 AM' in row for row in committed_rows)
+            assert sum('⋈ 1 @10:30 AM' in row for row in committed_rows) >= 2
+            assert any('⋈ 2 @10:45 AM' in row for row in committed_rows)
+            assert all('🗜️' not in row for row in committed_rows)
             for count, bar, percent in ((1, '██░░░░░░░░', 25), (3, '████████░░', 75)):
                 text = f'Index Indexing {count}/4 [{bar}] {percent}%'
                 matches = [row for row in rows if text in row and '~50% · low 15K' in row]
@@ -161,6 +172,8 @@ def capture(evidence, width, modern):
                 verified[label] = matches[0]
         else:
             assert all('Index' not in row for row in rows)
+            assert any('⋈ 1' in row for row in rows)
+            assert all('@10:30 AM' not in row for row in rows)
         fallback = [row for row in rows if '25%' in row and
                     not any(text in row for text in ('high', 'low', '~', 'Index'))]
         assert fallback, 'actual no-handle stock fallback missing'

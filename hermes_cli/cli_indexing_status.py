@@ -40,6 +40,26 @@ class RollingContextSnapshot:
 
 
 @dataclass(frozen=True)
+class RollingDisplaySnapshot:
+    """Committed rolling count and the selected recent-window boundary.
+
+    The consumer supplies these facts from its durable post-compaction witness
+    and completed selection.  The footer only presents them; it never infers a
+    rolling commit from host compression counters or a repaint.
+    """
+    committed_count: int
+    recent_window_start: str
+
+    def __post_init__(self):
+        if type(self.committed_count) is not int or not 0 <= self.committed_count <= 10**12:
+            raise ValueError("committed rolling count must be a bounded nonnegative integer")
+        if (not isinstance(self.recent_window_start, str)
+                or not self.recent_window_start.strip()
+                or len(self.recent_window_start) > 128):
+            raise ValueError("recent window start must be a bounded nonempty string")
+
+
+@dataclass(frozen=True)
 class CatchupSnapshot:
     """Current logical source/version work, NOT lifetime counts or attempts.
 
@@ -58,10 +78,13 @@ class CatchupSnapshot:
     health: str = "live"
     authoritative_complete: bool = False
     rolling_context: RollingContextSnapshot | None = None
+    rolling_display: RollingDisplaySnapshot | None = None
 
     def __post_init__(self):
         if self.rolling_context is not None and not isinstance(self.rolling_context, RollingContextSnapshot):
             raise ValueError("expected RollingContextSnapshot or None")
+        if self.rolling_display is not None and not isinstance(self.rolling_display, RollingDisplaySnapshot):
+            raise ValueError("expected RollingDisplaySnapshot or None")
         if not isinstance(self.scope, IndexingScope):
             raise ValueError("expected explicit IndexingScope")
         counters = (self.revision, self.published, self.pending, self.inflight, self.failed)

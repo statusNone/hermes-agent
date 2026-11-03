@@ -7,7 +7,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 from indexing_status_demo import StockRenderer, renderer_facade, demo_snapshots
-from hermes_cli.cli_indexing_status import IndexingStatus, RollingContextSnapshot, indexing_text
+from hermes_cli.cli_indexing_status import (
+    IndexingStatus, RollingContextSnapshot, RollingDisplaySnapshot, indexing_text,
+)
 
 
 class WatermarkTests(unittest.TestCase):
@@ -114,6 +116,34 @@ class WatermarkTests(unittest.TestCase):
                     self.assertTrue(all(cli._status_bar_display_width(v) == 12 for _, v in bars))
                     self.assertNotIn('#', text)
 
+    def test_committed_rolling_count_and_boundary_replace_stock_only_when_present(self):
+        with renderer_facade():
+            cli, state = self.make_renderer()
+            cli.state['compressions'] = 7
+            stock = ''.join(v for _, v in cli._get_status_bar_fragments())
+            self.assertIn('🗜️ 7', stock)
+            first = replace(state, revision=8,
+                rolling_display=RollingDisplaySnapshot(1, '10:30 AM'))
+            self.assertTrue(cli._indexing_status.update(first))
+            text = ''.join(v for _, v in cli._get_status_bar_fragments())
+            self.assertIn('⋈ 1 @10:30 AM', text)
+            self.assertNotIn('🗜️ 7', text)
+            # A fresh publication of the same committed selection is a no-op:
+            # host rendering must not turn a repaint into another commit.
+            noop = replace(first, revision=9)
+            self.assertTrue(cli._indexing_status.update(noop))
+            self.assertIn('⋈ 1 @10:30 AM',
+                          ''.join(v for _, v in cli._get_status_bar_fragments()))
+            committed = replace(first, revision=10,
+                rolling_display=RollingDisplaySnapshot(2, '10:45 AM'))
+            self.assertTrue(cli._indexing_status.update(committed))
+            changed = ''.join(v for _, v in cli._get_status_bar_fragments())
+            self.assertIn('⋈ 2 @10:45 AM', changed)
+            cli.width = 60
+            narrow = ''.join(v for _, v in cli._get_status_bar_fragments())
+            self.assertIn('⋈ 2', narrow)
+            self.assertNotIn('@10:45 AM', narrow)
+
     def test_scope_revision_and_invalid_data(self):
         cli, state = self.make_renderer()
         for field in ('profile', 'session', 'generation'):
@@ -123,6 +153,9 @@ class WatermarkTests(unittest.TestCase):
         for values in ((-1, 25000, 15000), (1, 0, 0), (1, 2, 2), (True, 2, 1)):
             with self.assertRaises(ValueError):
                 RollingContextSnapshot(*values)
+        for values in ((-1, '10:30'), (True, '10:30'), (1, ''), (1, 'x' * 129)):
+            with self.assertRaises(ValueError):
+                RollingDisplaySnapshot(*values)
 
 
 if __name__ == '__main__':

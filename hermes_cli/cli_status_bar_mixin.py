@@ -1027,6 +1027,7 @@ class CLIStatusBarMixin:
         handle = getattr(self, "_indexing_status", None)
         contribution = handle.snapshot() if handle is not None else None
         rolling = contribution.rolling_context if contribution is not None else None
+        rolling_display = contribution.rolling_display if contribution is not None else None
         if rolling is not None:
             # Display-only replacement; never change the host's provider accounting.
             snapshot = dict(snapshot, context_tokens=rolling.current, context_length=rolling.high,
@@ -1091,7 +1092,15 @@ class CLIStatusBarMixin:
                     label = snapshot.get(key) or ""
                     if label:
                         add(name, _DIM, f"{glyph} {label}")
-            add_count("compressions", "compressions", "🗜️", self._compression_count_style)
+            if rolling_display is None:
+                add_count("compressions", "compressions", "🗜️", self._compression_count_style)
+            elif _ok("compressions"):
+                # The plugin's durable post-compaction witness owns this count;
+                # never substitute the host's broader compression counter.
+                # Keep this replacement compact enough that the independent
+                # indexing segment retains the stock footer's spare-cell budget.
+                boundary = f" @{rolling_display.recent_window_start}" if wide else ""
+                segs.append([(_DIM, f"⋈ {rolling_display.committed_count}{boundary}")])
             add_count("bg_tasks", "active_background_tasks", "▶")
             add_count("bg_processes", "active_background_processes", "⚙")
             add_count("bg_subagents", "active_background_subagents", "⛓")
