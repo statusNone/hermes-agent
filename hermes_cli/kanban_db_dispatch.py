@@ -2302,6 +2302,21 @@ def _lane_rows(conn: sqlite3.Connection, status: str) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def _independent_review_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Explicit independent-review handoffs remain dispatchable when generic
+    review automation is disabled for a human-review board.
+
+    ``handoff-independent-review`` is an explicit request for one assigned
+    reviewer, unlike a normal task parked in the review column.  Keeping this
+    narrow preserves ``kanban.review_dispatch=false`` for ordinary reviews.
+    """
+    return conn.execute(
+        "SELECT id, assignee FROM tasks "
+        "WHERE status = 'review' AND review_of_task_id IS NOT NULL "
+        "AND claim_lock IS NULL ORDER BY priority DESC, created_at ASC"
+    ).fetchall()
+
+
 def _any_spawnable_review(
     conn: sqlite3.Connection,
     review_rows: list[sqlite3.Row],
@@ -2386,7 +2401,14 @@ def _dispatch_once_locked(
     ready_rows = _lane_rows(conn, "ready")
     # Review rows are enumerated up front so the budget split can see whether
     # review work exists at all.
-    review_rows = _lane_rows(conn, "review") if review_dispatch_enabled() else []
+    # A native independent-review handoff is an explicit request to launch one
+    # named reviewer.  It must not silently become a human-only review merely
+    # because the board disables automatic dispatch for ordinary review cards.
+    review_rows = (
+        _lane_rows(conn, "review")
+        if review_dispatch_enabled()
+        else _independent_review_rows(conn)
+    )
     # Per-profile cap. Deferred tasks go to skipped_per_profile_capped, not
     # skipped_unassigned — "busy, retry later" differs from "needs routing".
     # Resolved BEFORE the review reservation so the reservation can see which

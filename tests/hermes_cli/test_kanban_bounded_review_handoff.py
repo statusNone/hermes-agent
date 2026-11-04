@@ -9,6 +9,7 @@ import pytest
 from hermes_cli import kanban as kc
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
+from hermes_cli import kanban_db_dispatch as kbd
 
 
 @pytest.fixture
@@ -117,3 +118,74 @@ def test_independent_review_tool_requires_exact_candidate_and_contract(kanban_ho
         review = kb.get_task(conn, created["task_id"])
         assert review is not None
         assert review.review_candidate == "commit:abc"
+
+
+def test_independent_review_handoff_dispatches_once_when_generic_reviews_are_manual(
+    kanban_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit exact-candidate handoff is not a generic human-only review."""
+    import hermes_cli.config as cfgmod
+    import hermes_cli.profiles as profmod
+
+    monkeypatch.setattr(profmod, "profile_exists", lambda name: True)
+    monkeypatch.setattr(
+        cfgmod, "load_config", lambda *a, **k: {"kanban": {"review_dispatch": False}},
+    )
+    spawns: list[tuple[str, list[str]]] = []
+
+    def fake_spawn(task, workspace, board=None):
+        spawns.append((task.id, task.skills or []))
+        return 4242
+
+    with kbc.connect_closing() as conn:
+        source = kb.create_task(conn, title="source", assignee="builder")
+        assert kb.archive_task(conn, source) is True
+        review_id = kb.create_independent_review_task(
+            conn, source, reviewer="reviewer", candidate="commit:abc",
+            review_contract="Review commit:abc against the fix criteria.",
+        )
+
+        first = kbd.dispatch_once(conn, spawn_fn=fake_spawn)
+        second = kbd.dispatch_once(conn, spawn_fn=fake_spawn)
+
+        assert [task_id for task_id, _skills in spawns] == [review_id]
+        assert [task_id for task_id, _assignee, _workspace in first.spawned] == [review_id]
+        assert second.spawned == []
+        assert "sdlc-review" in spawns[0][1]
+        assert kb.get_task(conn, review_id).status == "running"
+
+
+def test_archiving_independent_review_requires_an_exact_linked_replacement(kanban_home: Path) -> None:
+    """Archiving a review cannot release dependent work without its verdict."""
+    with kbc.connect_closing() as conn:
+        source = kb.create_task(conn, title="source", assignee="builder")
+        contract = "Review commit:abc against the fix criteria."
+        original = kb.create_independent_review_task(
+            conn, source, reviewer="reviewer", candidate="commit:abc", review_contract=contract,
+        )
+        dependent = kb.create_task(conn, title="coordinator", assignee="coordinator")
+        kb.link_tasks(conn, original, dependent)
+        assert kb.get_task(conn, dependent).status == "todo"
+
+        assert kb.archive_task(conn, original) is False
+        assert kb.get_task(conn, original).status == "review"
+        assert kb.get_task(conn, dependent).status == "todo"
+
+        replacement = kb.create_independent_review_task(
+            conn, source, reviewer="reviewer", candidate="commit:abc", review_contract=contract,
+        )
+        kb.link_tasks(conn, replacement, dependent)
+        assert kb.archive_task(conn, original) is True
+        assert kb.get_task(conn, dependent).status == "todo"
+
+        claimed = kb.claim_review_task(conn, replacement)
+        assert claimed is not None
+        assert kb.block_task(
+            conn, replacement, reason="needs remediation", kind="needs_input",
+            expected_run_id=claimed.current_run_id,
+        )
+        assert kb.get_task(conn, dependent).status == "todo"
+
+        assert kb.complete_task(conn, replacement, summary="review complete")
+        released = kb.get_task(conn, dependent)
+        assert released is not None and released.status == "ready"

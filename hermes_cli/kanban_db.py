@@ -3696,6 +3696,40 @@ def specify_triage_task(
     return True
 
 
+def _unsafe_independent_review_archive_children(
+    conn: sqlite3.Connection, review_id: str, review_of_task_id: Optional[str],
+    candidate: Optional[str], review_contract: Optional[str],
+) -> list[str]:
+    """Children that an unfinished independent-review archive would release.
+
+    A replacement is safe only when the same child is also held by another
+    non-archived independent review of the exact implementation, candidate,
+    and contract.  Ordinary archive behavior stays unchanged.
+    """
+    if not review_of_task_id or not candidate or not review_contract:
+        return []
+    unsafe: list[str] = []
+    for child_id in child_ids(conn, review_id):
+        replacement = conn.execute(
+            """
+            SELECT 1
+              FROM task_links l
+              JOIN tasks replacement ON replacement.id = l.parent_id
+             WHERE l.child_id = ?
+               AND l.parent_id != ?
+               AND replacement.status != 'archived'
+               AND replacement.review_of_task_id = ?
+               AND replacement.review_candidate = ?
+               AND replacement.review_contract = ?
+             LIMIT 1
+            """,
+            (child_id, review_id, review_of_task_id, candidate, review_contract),
+        ).fetchone()
+        if replacement is None:
+            unsafe.append(child_id)
+    return unsafe
+
+
 def archive_task(conn: sqlite3.Connection, task_id: str, *, signal_fn=None) -> bool:
     """Archive a task; a *running* task's host-local worker is terminated.
 
@@ -3712,10 +3746,20 @@ def archive_task(conn: sqlite3.Connection, task_id: str, *, signal_fn=None) -> b
     """
     with write_txn(conn):
         row = conn.execute(
-            "SELECT status, claim_lock, worker_pid, worker_started_at FROM tasks WHERE id = ?",
+            "SELECT status, claim_lock, worker_pid, worker_started_at, review_of_task_id, "
+            "review_candidate, review_contract FROM tasks WHERE id = ?",
             (task_id,),
         ).fetchone()
         if not row:
+            return False
+        unsafe_children = _unsafe_independent_review_archive_children(
+            conn, task_id, row["review_of_task_id"], row["review_candidate"], row["review_contract"],
+        )
+        if unsafe_children:
+            _append_event(
+                conn, task_id, "archive_refused_pending_review",
+                {"children": unsafe_children},
+            )
             return False
         was_running = row["status"] == "running"
         prev_pid, prev_lock, prev_started = row["worker_pid"], row["claim_lock"], row["worker_started_at"]
