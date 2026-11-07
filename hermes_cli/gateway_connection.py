@@ -77,6 +77,8 @@ class SessionState:
         # Called (loop thread) with each ``session.usage`` payload; GatewayAgent maps it onto main's
         # agent attributes, so a frame landing between turns is never dropped with the turn queue.
         self.usage_listeners: list = []
+        from hermes_cli.gateway_indexing_status import IndexingCache
+        self.indexing = IndexingCache(session_id)
         # Called (loop thread) with each ``request.cancel`` payload: the agent thread may be parked in a
         # modal answering that very request (another viewer settled it), so it cannot read the queue.
         self.request_listeners: list = []
@@ -105,6 +107,8 @@ class SessionState:
         self.gaps = self.attached_gaps = 0
 
     def adopt_snapshot(self, snapshot):
+        if "indexing_status" in snapshot:
+            self.indexing.adopt(snapshot["indexing_status"], reattach=True)
         self.info = dict(snapshot.get("info") or {})
         self.revision = snapshot.get("revision", self.revision)
         self.subscription_id = snapshot.get("subscription_id", self.subscription_id)
@@ -126,7 +130,9 @@ class SessionState:
             provider and current_provider and provider != current_provider)
 
     def apply_event(self, kind, payload):
-        if kind in ("session.info", "session.updated") and isinstance(payload, dict):
+        if kind == "session.indexing":
+            self.indexing.adopt(payload)
+        elif kind in ("session.info", "session.updated") and isinstance(payload, dict):
             self.info.update({k: v for k, v in payload.items() if k != "session_id"})
             if isinstance(payload.get("pending"), list):
                 self.pending = list(payload["pending"])
@@ -290,6 +296,8 @@ class GatewayConnection:
             self._live = None
 
     def _put_loss(self, error):
+        for state in self.states.values():
+            state.indexing.disconnected()
         error.connection_epoch = self.epoch
         self.events.put(error)
 

@@ -688,7 +688,9 @@ class AuthorityConnection:
             # A micro-compaction merge stays in ``messages`` (an undo target); its originals are what shows.
             display['display_messages'] = display_projection(
                 [row for row in history if not model_only(row)], self.authority.profile_id)
+        from gateway.session_indexing_status import snapshot as indexing_snapshot
         return {'session_id': ref.session_id, 'stored_session_id': ref.session_id,
+                'indexing_status': indexing_snapshot(self.authority, ref.session_id),
                 **await _resume_transcript(self.authority, ref, snapshot, history, omit), **display,
                 'running': snapshot.handle.execution_state == 'running',
                 'authority_epoch': snapshot.handle.authority_epoch,

@@ -51,13 +51,26 @@ _COUNTER_FROM_USAGE = {
 class _CompressorView:
     """``agent.context_compressor`` as the status bar / banner read it (plain attributes)."""
 
-    def __init__(self):
+    def __init__(self, indexing=None):
+        self._indexing = indexing
+        self._indexing_unsubscribe = None
         self.last_prompt_tokens = 0
         self.last_real_prompt_tokens = None
         self.context_length = 0
         self.compression_count = 0
         self._config_context_length = None
         self.threshold_tokens = 0
+
+
+    def attach_indexing_status(self, handle):
+        self.detach_indexing_status()
+        if self._indexing is not None:
+            self._indexing_unsubscribe = self._indexing.subscribe(handle)
+
+    def detach_indexing_status(self):
+        if self._indexing_unsubscribe is not None:
+            self._indexing_unsubscribe()
+            self._indexing_unsubscribe = None
 
 
 class _Turn:
@@ -164,7 +177,7 @@ class GatewayAgent:
         self._memory_manager = None
         self._memory_store = None
         self._checkpoint_mgr = None
-        self.context_compressor = _CompressorView()
+        self.context_compressor = _CompressorView(conn.state(session_id).indexing)
         self._reset_session_figures()
         # Main's store type, the one /new, /resume and /branch swap in: a read-only mirror of the gateway's
         # todo snapshot (``_set_todos``), read by the pet's done-plan beat.
@@ -403,6 +416,8 @@ class GatewayAgent:
             state.usage_listeners.append(self.apply_session_usage)
         if self._on_request_withdrawn not in state.request_listeners:
             state.request_listeners.append(self._on_request_withdrawn)
+        self.context_compressor.detach_indexing_status()
+        self.context_compressor = _CompressorView(state.indexing)
         self._apply_info(state.info)
         if state.usage:
             self.apply_session_usage(state.usage)
@@ -575,7 +590,7 @@ class GatewayAgent:
         return None
 
     def close(self, *a, **k):
-        return None
+        self.context_compressor.detach_indexing_status()
 
     def _restore_primary_runtime(self, *a, **k):
         return None

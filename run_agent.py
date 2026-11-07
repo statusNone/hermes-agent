@@ -939,6 +939,8 @@ class AIAgent(
     def close(self) -> None:
         """Release every resource this agent holds (idempotent); each phase is guarded so one failure never
         blocks the rest."""
+        from gateway.session_indexing_status import close as close_indexing_status
+        _quietly(close_indexing_status, self)
         session_messages = getattr(self, "_session_messages", None)
         _quietly(self.shutdown_memory_provider, session_messages if isinstance(session_messages, list) else None)
         self._close_task_resources(getattr(self, "session_id", None) or "")

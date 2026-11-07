@@ -977,6 +977,8 @@ class SessionAuthority:
         delivered to the cached agent for an earlier generation may have landed after that
         turn's finalizer cleared it, so it is dropped rather than cancelling this turn. A managed
         worker is a fresh process per turn and carries no earlier flag to drop."""
+        from gateway.session_indexing_status import attach
+        attach(self, session_id, agent)
         live = self.sessions.get(session_id)
         # The turn's executor thread runs this; the stream lock orders it against session.steer's latch.
         with live.event_stream.lock if live is not None else contextlib.nullcontext():

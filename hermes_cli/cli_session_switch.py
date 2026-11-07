@@ -27,6 +27,10 @@ def _sync_agent_to_session(cli, session_id: str, *, parent_session_id: str, reas
         return
     cli.agent.session_id = session_id
     cli.agent.reset_session_state()
+    from hermes_cli.gateway_agent import GatewayAgent
+    if isinstance(cli.agent, GatewayAgent):
+        from hermes_cli.cli_context_status import attach_context_status
+        attach_context_status(cli)
     if hasattr(cli.agent, "_last_flushed_db_idx"):
         cli.agent._last_flushed_db_idx = len(cli.conversation_history)
     if hasattr(cli.agent, "_todo_store"):
