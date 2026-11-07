@@ -109,7 +109,7 @@ def test_the_next_call_after_a_restart_reconnects_and_resubscribes(gateway, conn
     assert conn.call("status") == {"status": "ok", "life": 2}
     assert conn.epoch == 2
     # Resubscribed before the reconnect counts as ready, so no frame of the new life is missed.
-    assert gateway.lives[1].calls[0] == ("session.resume", {"session_id": SID})
+    assert gateway.lives[1].calls[:2] == [("runtime.describe", {}), ("session.resume", {"session_id": SID})]
     assert conn.state(SID).subscription_id == "sub-2"
     lost = conn.events.get_nowait()
     assert isinstance(lost, GatewayClientError) and lost_before(lost, conn.epoch)
@@ -182,7 +182,7 @@ def test_a_turn_lost_to_a_restart_is_reported_plainly_and_the_next_turn_runs(gat
     conn._thread.join(5)
     result = agent.run_conversation("second")
     assert not result.get("failed") and result["final_response"] == "reply 2"
-    assert [method for method, _ in gateway.lives[1].calls][:2] == ["session.resume", "prompt.submit"]
+    assert [method for method, _ in gateway.lives[1].calls][:3] == ["runtime.describe", "session.resume", "prompt.submit"]
 
 
 def test_the_previous_connections_loss_never_fails_a_live_turn(gateway, conn):
@@ -367,7 +367,7 @@ def test_the_dock_and_stop_after_a_hang_up_redial(gateway, conn, tools):
     view = tools.process_view()
     assert view is not None and tools.process_registry() is view
     view.kill_all()
-    assert [method for method, _ in gateway.lives[1].calls][:2] == ["session.resume", "process.stop"]
+    assert [method for method, _ in gateway.lives[1].calls][:3] == ["runtime.describe", "session.resume", "process.stop"]
 
 
 def test_shared_keeps_a_hung_up_connection_instead_of_opening_a_second(gateway, conn, monkeypatch):
@@ -380,7 +380,7 @@ def test_new_after_a_hang_up_redials_and_detaches_with_the_end_reason(gateway, c
     """Dropping the subscription without ``session.detach`` leaves the owner never ending the row."""
     gateway.hang_up(conn)
     store.end_session(SID, "new_session")
-    assert gateway.lives[1].calls == [("session.resume", {"session_id": SID}), ("session.detach", {
+    assert gateway.lives[1].calls == [("runtime.describe", {}), ("session.resume", {"session_id": SID}), ("session.detach", {
         "session_id": SID, "subscription_id": "sub-2", "end_reason": "new_session"})]
     gateway.hang_up(conn)
     conn.call("status")

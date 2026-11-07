@@ -158,6 +158,7 @@ class AuthorityConnection:
         bind_native_transport(authority, self.actor, identity)
         self.native_owner = identity.get('native_bootstrap') is True
         self.subscriptions = {}
+        self.event_capabilities = set()  # connection-local opt-ins, shared by its profile siblings
         # session_id -> (epoch, sequence) the last reconnect replay answered; spent by the next resume.
         self.replay_cursors = {}
         self.handed_back = set()  # sessions this live client detached without closing (the TUI's switcher)
@@ -189,6 +190,7 @@ class AuthorityConnection:
                 if connection is None or connection.authority is not sibling:
                     identity = dict(self._identity, profile_id=sibling.profile_id, instance_id=sibling.instance_id)
                     connection = AuthorityConnection(sibling, self.transport, identity, operator=self._operator)
+                    connection.event_capabilities = self.event_capabilities
                     self._siblings[sibling.profile_id] = connection
                 return connection
         if registry is not None and registry.starting(profile) is not None:
@@ -216,6 +218,7 @@ class AuthorityConnection:
         """Method → handler for every verb ``dispatch`` serves outside the group controls; each
         name is declared in ``tui_gateway/contracts`` (``METHODS`` or ``CANONICAL_METHODS``)."""
         handlers = {'session.create': self.create, 'ping': self.ping, 'runtime.describe': self.describe,
+                    'client.capabilities': self.client_capabilities,
                     'commands.catalog': self.command_catalog, 'complete.slash': self.slash_completions,
                     'plugins.list': self.plugins_list, 'command.observe': self.command_observe,
                     'slash.exec': self.slash_exec, 'command.dispatch': self.command_dispatch,
@@ -545,11 +548,15 @@ class AuthorityConnection:
         return {'instance_id': self.authority.instance_id, 'profile_id': self.authority.profile_id,
                 'authority_epoch': self.authority.epoch,
                 'capabilities': ['durable-admission-v1', 'event-replay-v1', 'local-cli-create-v1', 'acp-editor-policy-v1',
-                                 'acp-session-mcp-v1', 'clarify-batch-v1'],
+                                 'acp-session-mcp-v1', 'clarify-batch-v1', 'session-indexing-v1'],
                 'session_create': {'sources': sorted(SURFACES),
                                    'parameters': sorted(CREATE_FIELDS | {'title'})},
                 # Main's ``gateway.ready.skin``: the canonical client's own ready carries it.
                 'skin': await asyncio.to_thread(resolved_skin)}
+
+    async def client_capabilities(self, ref, params):
+        from gateway.session_client_capabilities import advertise
+        return advertise(self, params)
 
     async def info(self, ref, params):
         from gateway.session_local_inventory import snapshot_info
@@ -669,7 +676,8 @@ class AuthorityConnection:
         # compression lineage (a whole-lineage read here made every open of a long chat cost seconds).
         omit = params.get('omit_messages') is True
         snapshot = await self.authority.attach(
-            self.actor, ref, history=not omit, replay_from=replay_from if ref.session_id == requested else None)
+            self.actor, ref, history=not omit, replay_from=replay_from if ref.session_id == requested else None,
+            event_capabilities=self.event_capabilities)
         self.subscriptions[ref.session_id] = snapshot.subscription_id
         self.handed_back.discard(ref.session_id)
         self._spawn_notice(ref)
@@ -688,9 +696,9 @@ class AuthorityConnection:
             # A micro-compaction merge stays in ``messages`` (an undo target); its originals are what shows.
             display['display_messages'] = display_projection(
                 [row for row in history if not model_only(row)], self.authority.profile_id)
-        from gateway.session_indexing_status import snapshot as indexing_snapshot
+        from gateway.session_client_capabilities import indexing_snapshot_fields
         return {'session_id': ref.session_id, 'stored_session_id': ref.session_id,
-                'indexing_status': indexing_snapshot(self.authority, ref.session_id),
+                **indexing_snapshot_fields(self, ref.session_id),
                 **await _resume_transcript(self.authority, ref, snapshot, history, omit), **display,
                 'running': snapshot.handle.execution_state == 'running',
                 'authority_epoch': snapshot.handle.authority_epoch,

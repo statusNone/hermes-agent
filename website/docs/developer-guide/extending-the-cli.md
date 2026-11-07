@@ -19,6 +19,27 @@ does not fit, without hiding required clarify/warning UI. No extra gauge or row.
 command, or None to continue ordinary dispatch. The producer owns bounded worker
 cleanup and publication truth. This seam does not transport gateway state.
 
+### Gateway-backed classic viewers
+
+The resident gateway producer is independent of viewer lifetime. Native connections
+default to **no indexing telemetry**, including resume snapshots. A viewer first reads
+`runtime.describe`; only if `capabilities` includes `session-indexing-v1` does it send
+`client.capabilities {indexing_status: true}` before creating/resuming sessions. The
+classic CLI does this on every connection, including reconnect, without sending the new
+field to older hosts. Capability updates affect only named fields on that socket (and
+its profile projections); they do not grant session permissions.
+
+An opted-in resume includes cached `indexing_status` (null without a producer), and
+attached viewers receive `session.indexing` events. These events have **no `seq` or
+`replay_epoch`**, never enter ordinary replay or observers, and cannot advance replay
+cursors or evict conversation events. They use the existing bounded per-peer mailbox
+and WebSocket batch writer. Overflow still retires that subscription and sends
+`session.replay_gap` with the ordinary cursor; resume restores the latest cached status.
+`indexing_status: false` stops future indexing publications to that connection;
+already admitted/in-flight frames may finish. Detach, opt-out, and reconnect never
+attach or close the resident producer. Without the optional engine hook, no producer
+is created and ordinary session behavior is unchanged.
+
 Hermes exposes protected extension hooks on `HermesCLI` so wrapper CLIs can add widgets, keybindings, and layout customizations without overriding the `run()` method or the TUI construction in `hermes_cli/cli_tui_mixin.py` (where these hooks are defined; `HermesCLI` in `cli.py` mixes it in). This keeps your extension decoupled from internal changes.
 
 ## Extension points

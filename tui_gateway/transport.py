@@ -133,6 +133,7 @@ class StdioTransport:
 @dataclass(eq=False)
 class _FanoutPeer:
     transport: Transport
+    capabilities: set[str] | frozenset[str] = frozenset()
     pending: deque = field(default_factory=deque)
     pending_bytes: int = 0
     writing: bool = False
@@ -165,22 +166,24 @@ class FanoutTransport:
         for transport in transports:
             self.attach(transport)
 
-    def attach(self, transport: Transport) -> bool:
+    def attach(self, transport: Transport, *, capabilities: set[str] | frozenset[str] = frozenset()) -> bool:
         if transport is None or transport is self:
             return False
         with self._lock:
             for peer in self._peers:
                 if peer.transport is transport:
                     if peer.attached:
+                        peer.capabilities = capabilities
                         return False
                     # Reuse the in-flight writer: reconnect cannot spawn more
                     # threads or overtake a write already inside this socket.
                     peer.pending.clear()
                     peer.pending_bytes = 0
                     peer.attached = True
+                    peer.capabilities = capabilities
                     peer.generation += 1
                     return True
-            self._peers.append(_FanoutPeer(transport))
+            self._peers.append(_FanoutPeer(transport, capabilities=capabilities))
             return True
 
     def _remove(self, peer: _FanoutPeer) -> None:
@@ -281,21 +284,25 @@ class FanoutTransport:
         except Exception:
             logger.debug("fanout overflow close failed; membership already dropped", exc_info=True)
 
-    def write(self, obj: dict, *, overflow: Callable[[Transport], Optional[dict]] | None = None) -> bool:
+    def write(self, obj: dict, *, overflow: Callable[[Transport], Optional[dict]] | None = None,
+              capability: str | None = None) -> bool:
         """Fan *obj* out. A peer whose bounded backlog is full loses its subscription; *overflow*
         (called with its transport, under the membership lock) may return one final frame that
         replaces the dropped backlog, so a socket that is still healthy learns it must resume
         rather than silently continuing with partial history. Without such a notice the peer's
-        transport is closed so the client notices, reconnects and replays."""
+        transport is closed so the client notices, reconnects and replays. Optional *capability*
+        selects opted-in peers before queue admission, without wrapping their batch-aware transports.
+        The connection owns the capability set and may update it for future publications."""
         # Freeze the queued frame so a caller cannot mutate it after admission. Same serialization
         # guard as the single-peer transports: an unserializable frame reaches every peer as -32603.
         encoded = serialize_frame(obj, "fanout", logger)
         size = len(encoded.encode("utf-8", errors="surrogatepass"))
         frame = json.loads(encoded)
         overflowed: list[Transport] = []
+        delivered = False
         with self._lock:
             for peer in list(self._peers):
-                if not peer.attached:
+                if not peer.attached or (capability is not None and capability not in peer.capabilities):
                     continue
                 if (len(peer.pending) >= self._MAX_PENDING_FRAMES
                         or peer.pending_bytes + size > self._MAX_PENDING_BYTES):
@@ -314,15 +321,16 @@ class FanoutTransport:
                                              name="tui-fanout", daemon=True).start()
                     continue
                 peer.pending.append((frame, size))
+                delivered = True
                 peer.pending_bytes += size
                 if not peer.writing:
                     peer.writing = True
                     threading.Thread(target=self._drain, args=(peer,),
                                      name="tui-fanout", daemon=True).start()
-            remaining = any(peer.attached for peer in self._peers)
+
         for transport in overflowed:
             self._signal_overflow_detach(transport)
-        return remaining
+        return delivered
 
     def close(self) -> None:
         """Detach without closing sockets owned by the connection handlers."""

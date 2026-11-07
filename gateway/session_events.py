@@ -38,6 +38,12 @@ class SessionEvents:
     def publish(self, session_id, payload, *, event_type="message.complete", execution=None):
         # ``execution`` stamps this frame alone; the shared stamp is read without the lock elsewhere.
         with self.lock:
+            if event_type == 'session.indexing':
+                # Optional, replaceable telemetry is not conversation history. It must never
+                # consume a cursor, evict replay, or reach durable/API observers.
+                return self.fanout.write({'jsonrpc': '2.0', 'method': 'event', 'params': {
+                    'type': event_type, 'session_id': session_id, 'payload': payload}},
+                    capability='session.indexing', overflow=lambda peer: self._overflow(session_id, peer))
             self.watermark()
             frame = {'jsonrpc': '2.0', 'method': 'event', 'params': {
                 **(self.execution if execution is None else execution), 'type': event_type, 'session_id': self._key,
@@ -53,15 +59,7 @@ class SessionEvents:
             self._public_id = session_id
             self.sequence = frame['params']['seq']
 
-            def overflow(transport):
-                # The peer's socket is healthy; only its event subscription ended. Same
-                # shape as the client's own synthetic gap so one consumer handles both.
-                if self.on_overflow is not None:
-                    self.on_overflow(transport)
-                return {'jsonrpc': '2.0', 'method': 'event', 'params': {
-                    'type': 'session.replay_gap', 'session_id': session_id,
-                    'payload': {'replay_epoch': self.epoch, 'latest_seq': self.sequence}}}
-            delivered = self.fanout.write(frame, overflow=overflow)
+            delivered = self.fanout.write(frame, overflow=lambda peer: self._overflow(session_id, peer))
             for observer in tuple(self.observers):
                 try:
                     observer(frame)
@@ -73,6 +71,15 @@ class SessionEvents:
             # True when a live viewer or observer took the frame; the replay ring alone is not
             # delivery (a detached finite viewer reads nothing until it reattaches).
             return delivered
+
+    def _overflow(self, session_id, transport):
+        # Telemetry shares the bounded mailbox and retirement path, but the notice names
+        # the ordinary cursor. The socket is healthy; only its subscription ended.
+        if self.on_overflow is not None:
+            self.on_overflow(transport)
+        return {'jsonrpc': '2.0', 'method': 'event', 'params': {
+            'type': 'session.replay_gap', 'session_id': session_id,
+            'payload': {'replay_epoch': self.epoch, 'latest_seq': self.sequence}}}
 
     def catch_up(self, transport, epoch, sequence):
         """Caller holds ``lock``, before *transport* joins ``fanout``: write it the frames after the

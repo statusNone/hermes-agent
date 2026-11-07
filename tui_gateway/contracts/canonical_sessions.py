@@ -158,7 +158,7 @@ class CanonicalSnapshot(Result):
     pending_connection: ConnectionRequestPayload | None = None
     # The session's todo snapshot (its transcript's newest todo result); null when it has none.
     todo_state: TodoState | None = None
-    # Optional cached context-engine status; validated by the indexing consumer.
+    # Present only after client.capabilities indexing_status=true; null without a producer.
     indexing_status: IndexingStatusPayload | None = None
     # The owner's server→client requests still unanswered (``session_server_requests.open_requests``).
     open_requests: list[OpenRequestEntry] | None = None

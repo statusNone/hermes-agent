@@ -53,8 +53,30 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _resident_indexing_events():
+    """Observe the optional producer's real publication, outside the legacy emitter scan."""
+    from threading import RLock
+    from types import SimpleNamespace
+    from gateway.session_indexing_status import attach, close
+    from hermes_cli.cli_indexing_status import CatchupSnapshot
+
+    names = set()
+    stream = SimpleNamespace(lock=RLock(), publish=lambda sid, payload, *, event_type: names.add(event_type))
+    engine = SimpleNamespace(
+        attach_indexing_status=lambda handle: handle.update(CatchupSnapshot(handle.scope, 1, 0, 1)),
+        on_session_end=lambda sid, messages: None)
+    agent = SimpleNamespace(context_compressor=engine, session_id='contract-probe')
+    authority = SimpleNamespace(profile_id='contract-probe', sessions={
+        'contract-probe': SimpleNamespace(event_stream=stream)})
+    try:
+        attach(authority, 'contract-probe', agent)
+        return names
+    finally:
+        close(agent)
+
+
 def emitted_event_names() -> set[str]:
-    names: set[str] = set()
+    names: set[str] = _resident_indexing_events()
     for src in (REPO / "tui_gateway").glob("*.py"):
         text = _read(src)
         names.update(_LITERAL_EMIT.findall(text))

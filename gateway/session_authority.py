@@ -336,7 +336,7 @@ class SessionAuthority:
                 raise RuntimeStoreError('not_found') from None
             raise
 
-    async def attach(self, actor, ref, *, history=True, replay_from=None):
+    async def attach(self, actor, ref, *, history=True, replay_from=None, event_capabilities=frozenset()):
         """Join *ref*'s event stream and snapshot it. ``history=False``: the snapshot carries no transcript
         (``history == ()``), only the physical ``transcript_target``, so the display-row lineage read is
         skipped; for a viewer that pages the transcript itself (Desktop over REST).
@@ -367,7 +367,7 @@ class SessionAuthority:
             if transport is not None:
                 if replay_from is not None and not live.event_stream.fanout.contains(transport):
                     live.event_stream.catch_up(transport, *replay_from)
-                live.event_stream.fanout.attach(transport)
+                live.event_stream.fanout.attach(transport, capabilities=event_capabilities)
                 live.event_stream.on_overflow = partial(self._retire_overflowed, ref.session_id)
             active_generation = handle.execution_generation if handle.execution_state == "running" else None
             prompts = live.controls.snapshot(ref.session_id, active_generation)

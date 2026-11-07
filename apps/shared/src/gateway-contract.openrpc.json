@@ -8101,6 +8101,55 @@
         "title": "CanonicalBotDeliverResult",
         "type": "object"
       },
+      "CanonicalClientCapabilitiesParams": {
+        "additionalProperties": false,
+        "properties": {
+          "server_requests": {
+            "default": false,
+            "title": "Server Requests",
+            "type": "boolean"
+          },
+          "desktop_local": {
+            "default": false,
+            "title": "Desktop Local",
+            "type": "boolean"
+          },
+          "indexing_status": {
+            "default": false,
+            "title": "Indexing Status",
+            "type": "boolean"
+          }
+        },
+        "title": "CanonicalClientCapabilitiesParams",
+        "type": "object"
+      },
+      "CanonicalClientCapabilitiesResult": {
+        "additionalProperties": false,
+        "properties": {
+          "server_requests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Server Requests",
+            "type": "array"
+          },
+          "declines_not_shown": {
+            "default": false,
+            "title": "Declines Not Shown",
+            "type": "boolean"
+          },
+          "indexing_status": {
+            "title": "Indexing Status",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "server_requests",
+          "indexing_status"
+        ],
+        "title": "CanonicalClientCapabilitiesResult",
+        "type": "object"
+      },
       "CanonicalConfigGetResult": {
         "additionalProperties": false,
         "properties": {
@@ -10598,6 +10647,17 @@
             ],
             "default": null
           },
+          "indexing_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexingStatusPayload"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "open_requests": {
             "anyOf": [
               {
@@ -11550,6 +11610,88 @@
         ],
         "title": "CatalogTier",
         "type": "string"
+      },
+      "CatchupSnapshot": {
+        "description": "Current logical source/version work, NOT lifetime counts or attempts.\n\nPublished means cataloged, embedded AND published/retrievable. Counters\npartition known_total. New admissions can grow it and regress the gauge.\nNone means discovery has not established a denominator. Completion is an\nauthoritative assertion, not an inference from an empty pending queue.",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/IndexingScope"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "published": {
+            "title": "Published",
+            "type": "integer"
+          },
+          "known_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Known Total"
+          },
+          "pending": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "inflight": {
+            "default": 0,
+            "title": "Inflight",
+            "type": "integer"
+          },
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "health": {
+            "default": "live",
+            "title": "Health",
+            "type": "string"
+          },
+          "authoritative_complete": {
+            "default": false,
+            "title": "Authoritative Complete",
+            "type": "boolean"
+          },
+          "rolling_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RollingContextSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "rolling_display": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RollingDisplaySnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "scope",
+          "revision",
+          "published",
+          "known_total"
+        ],
+        "title": "CatchupSnapshot",
+        "type": "object"
       },
       "ChangeSignalPayload": {
         "additionalProperties": true,
@@ -21116,6 +21258,62 @@
           "available"
         ],
         "title": "ImageGenerateResult",
+        "type": "object"
+      },
+      "IndexingScope": {
+        "properties": {
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          },
+          "session": {
+            "title": "Session",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile",
+          "session",
+          "generation"
+        ],
+        "title": "IndexingScope",
+        "type": "object"
+      },
+      "IndexingStatusPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Epoch",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CatchupSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "epoch",
+          "generation",
+          "snapshot"
+        ],
+        "title": "IndexingStatusPayload",
         "type": "object"
       },
       "InflightTurn": {
@@ -33981,6 +34179,49 @@
           "enabled"
         ],
         "title": "RollbackSessionDiffResult",
+        "type": "object"
+      },
+      "RollingContextSnapshot": {
+        "description": "Latest selected, pre-recall occupancy in canonical estimated tokens.\n\nHigh is a soft rolling watermark, not the provider context limit. This is\nsampled at selection, not recomputed on repaint or substituted with usage.\nOwnership and freshness use the enclosing CatchupSnapshot's scope/revision.",
+        "properties": {
+          "current": {
+            "title": "Current",
+            "type": "integer"
+          },
+          "high": {
+            "title": "High",
+            "type": "integer"
+          },
+          "low": {
+            "title": "Low",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "current",
+          "high",
+          "low"
+        ],
+        "title": "RollingContextSnapshot",
+        "type": "object"
+      },
+      "RollingDisplaySnapshot": {
+        "description": "Committed rolling count and the selected recent-window boundary.\n\nThe consumer supplies these facts from its durable post-compaction witness\nand completed selection.  The footer only presents them; it never infers a\nrolling commit from host compression counters or a repaint.",
+        "properties": {
+          "committed_count": {
+            "title": "Committed Count",
+            "type": "integer"
+          },
+          "recent_window_start": {
+            "title": "Recent Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "committed_count",
+          "recent_window_start"
+        ],
+        "title": "RollingDisplaySnapshot",
         "type": "object"
       },
       "Room": {
@@ -48086,6 +48327,24 @@
       }
     },
     {
+      "name": "client.capabilities",
+      "summary": "Connection-local capabilities; only named fields change. Indexing defaults off. Negotiate only when runtime.describe advertises session-indexing-v1.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/CanonicalClientCapabilitiesParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CanonicalClientCapabilitiesResult"
+        }
+      }
+    },
+    {
       "name": "command.observe",
       "summary": "Fire-only: a recognized command the classic CLI or the TUI runs itself; the gateway fires `pre_command` for it in the session's profile after replying (`queued` false: not fired).",
       "params": [
@@ -49705,6 +49964,18 @@
           "name": "payload",
           "schema": {
             "$ref": "#/components/schemas/SessionControlUpdatePayload"
+          }
+        }
+      ]
+    },
+    {
+      "name": "session.indexing",
+      "summary": "Opt-in unsequenced resident context-engine snapshot; never ordinary replay or observers. Producer lifetime, not turn lifetime. Null retires it.",
+      "params": [
+        {
+          "name": "payload",
+          "schema": {
+            "$ref": "#/components/schemas/IndexingStatusPayload"
           }
         }
       ]

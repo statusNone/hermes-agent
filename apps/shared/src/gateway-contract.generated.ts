@@ -4651,6 +4651,16 @@ export interface CanonicalShellExecParams {
   command: string
   profile?: string | null
 }
+export interface CanonicalClientCapabilitiesParams {
+  server_requests?: boolean
+  desktop_local?: boolean
+  indexing_status?: boolean
+}
+export interface CanonicalClientCapabilitiesResult {
+  server_requests: string[]
+  declines_not_shown?: boolean
+  indexing_status: boolean
+}
 export interface PromptReceiptParams {
   session_id: string
   admission_id: string
@@ -5037,6 +5047,7 @@ export interface CanonicalSnapshot {
   info: CanonicalSnapshotInfo
   pending_connection?: ConnectionRequestPayload | null
   todo_state?: TodoState | null
+  indexing_status?: IndexingStatusPayload | null
   open_requests?: OpenRequestEntry[] | null
 }
 export interface CanonicalPendingAdmission {
@@ -5102,6 +5113,41 @@ export interface CanonicalSnapshotInfo {
   tool_count?: number | null
   credential_hint?: string | null
   config_warning?: string | null
+}
+export interface IndexingStatusPayload {
+  epoch: string
+  generation: number
+  snapshot: CatchupSnapshot | null
+}
+/** Current logical source/version work, NOT lifetime counts or attempts. Published means cataloged, embedded AND published/retrievable. Counters partition known_total. New admissions can grow it and regress the gauge. None means discovery has not established a denominator. Completion is an authoritative assertion, not an inference from an empty pending queue. */
+export interface CatchupSnapshot {
+  scope: IndexingScope
+  revision: number
+  published: number
+  known_total: number | null
+  pending?: number
+  inflight?: number
+  failed?: number
+  health?: string
+  authoritative_complete?: boolean
+  rolling_context?: RollingContextSnapshot | null
+  rolling_display?: RollingDisplaySnapshot | null
+}
+export interface IndexingScope {
+  profile: string
+  session: string
+  generation: string
+}
+/** Latest selected, pre-recall occupancy in canonical estimated tokens. High is a soft rolling watermark, not the provider context limit. This is sampled at selection, not recomputed on repaint or substituted with usage. Ownership and freshness use the enclosing CatchupSnapshot's scope/revision. */
+export interface RollingContextSnapshot {
+  current: number
+  high: number
+  low: number
+}
+/** Committed rolling count and the selected recent-window boundary. The consumer supplies these facts from its durable post-compaction witness and completed selection. The footer only presents them; it never infers a rolling commit from host compression counters or a repaint. */
+export interface RollingDisplaySnapshot {
+  committed_count: number
+  recent_window_start: string
 }
 export interface CanonicalResumeParams {
   profile?: string | null
@@ -6865,6 +6911,8 @@ export interface CanonicalRpcMethods {
   'clarify.lock': { params: ClarifyLockParams; result: ClarifyLockResult }
   /** Generation-fenced answer to a pending clarify prompt (empty answer = skipped). */
   'clarify.respond': { params: ClarifyRespondParams; result: PromptResponseResult }
+  /** Connection-local capabilities; only named fields change. Indexing defaults off. Negotiate only when runtime.describe advertises session-indexing-v1. */
+  'client.capabilities': { params: CanonicalClientCapabilitiesParams; result: CanonicalClientCapabilitiesResult }
   /** Fire-only: a recognized command the classic CLI or the TUI runs itself; the gateway fires `pre_command` for it in the session's profile after replying (`queued` false: not fired). */
   'command.observe': { params: CommandObserveParams; result: CommandObserveResult }
   'config.get': { params: ConfigGetParams; result: CanonicalConfigGetResult }
@@ -6943,6 +6991,7 @@ export const CANONICAL_RPC_METHODS = [
   'bot_relay.settle',
   'clarify.lock',
   'clarify.respond',
+  'client.capabilities',
   'command.observe',
   'config.get',
   'config.set',
@@ -7140,6 +7189,8 @@ export interface BackendGatewayEventMap {
   'review.summary': ReviewSummaryPayload
   /** Persisted goal / loop / heartbeat state changed. */
   'session.control.update': SessionControlUpdatePayload
+  /** Opt-in unsequenced resident context-engine snapshot; never ordinary replay or observers. Producer lifetime, not turn lifetime. Null retires it. */
+  'session.indexing': IndexingStatusPayload
   /** Live session settings snapshot (``server._session_info``); also the ``info`` of create/resume/activate. */
   'session.info': SessionLiveInfo
   /** The backend reclaimed a live session out from under its clients. */
@@ -7251,6 +7302,7 @@ export const GATEWAY_EVENT_TYPES = [
   'request.cancel',
   'review.summary',
   'session.control.update',
+  'session.indexing',
   'session.info',
   'session.reclaimed',
   'session.resume_progress',

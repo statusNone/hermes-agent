@@ -68,7 +68,7 @@ def test_the_reply_comes_over_a_socket_of_its_own_that_then_closes():
         reply = conn.call_until('slash.exec', threading.Event(), session_id='s', command='quick')
         viewer, command = gateway.clients
         assert reply == {'type': 'exec', 'output': 'done'}
-        assert viewer.calls == [] and not viewer.closed  # the viewer's socket stays free and open
+        assert viewer.calls == [('runtime.describe', {}, None)] and not viewer.closed
         assert command.calls == [('slash.exec', {'session_id': 's', 'command': 'quick'}, float('inf'))]
         assert command.closed and not _threads() and not conn._commands
     finally:
@@ -94,7 +94,7 @@ def test_a_stopped_wait_closes_the_command_socket_and_never_sends_again(stop):
     assert not thread.is_alive()
     assert isinstance(outcome.get('error'), CallStopped), outcome
     viewer, command = gateway.clients
-    assert viewer.calls == [] and len(command.calls) == 1 and command.closed
+    assert viewer.calls == [('runtime.describe', {}, None)] and len(command.calls) == 1 and command.closed
     assert not _threads() and not conn._commands
 
 
@@ -105,7 +105,7 @@ def test_a_failed_command_dial_sends_nothing_and_is_not_retried():
         with pytest.raises(GatewayClientError, match='connection failed') as raised:
             conn.call_until('slash.exec', threading.Event(), session_id='s', command='x')
         assert not isinstance(raised.value, CallStopped)
-        assert len(gateway.clients) == 1 and gateway.clients[0].calls == []
+        assert len(gateway.clients) == 1 and gateway.clients[0].calls == [('runtime.describe', {}, None)]
         assert not _threads() and not conn._commands
     finally:
         conn.close()

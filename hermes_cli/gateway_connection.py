@@ -274,6 +274,8 @@ class GatewayConnection:
             connect = connect_gateway
         try:
             async with connect() as client:
+                from hermes_cli.gateway_indexing_status import negotiate
+                await negotiate(client)
                 if self.epoch:
                     await self._resubscribe(client)
                 self.epoch += 1

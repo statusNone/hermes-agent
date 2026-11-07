@@ -14,9 +14,25 @@ from typing import Literal
 from .base import JsonValue, Params, Result
 from .common import McpServerStatus, OpenModel, PlanGauge, ProjectRef
 from .events import SkinPayload
+from .liveness import ClientCapabilitiesParams, ClientCapabilitiesResult
 from .groups_bot_relay import RoomParams, RoomTaskReceipt
 from .prompt_voice import ClarifyLockParams, ClarifyLockResult
 from .registry import canonical_method, method
+
+
+class CanonicalClientCapabilitiesParams(ClientCapabilitiesParams):
+    #: Receive optional unsequenced session.indexing telemetry and cached resume snapshots.
+    indexing_status: bool = False
+
+
+class CanonicalClientCapabilitiesResult(ClientCapabilitiesResult):
+    indexing_status: bool
+
+
+canonical_method('client.capabilities', params=CanonicalClientCapabilitiesParams,
+                 result=CanonicalClientCapabilitiesResult,
+                 doc='Connection-local capabilities; only named fields change. Indexing defaults off. '
+                     'Negotiate only when runtime.describe advertises session-indexing-v1.')
 
 # ── admissions ────────────────────────────────────────────────────────────────────────────────
 

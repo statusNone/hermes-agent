@@ -6,6 +6,25 @@ from hermes_cli.cli_indexing_status import (
 )
 
 
+async def negotiate(client):
+    """Opt this classic viewer in before attaching, on every socket life.
+
+    Older hosts neither advertise this capability nor accept the new field. Do not send
+    it speculatively, and do not hide transport/auth failures as an older-host verdict.
+    """
+    from hermes_cli.gateway_client import GatewayRPCError
+    try:
+        description = await client.rpc('runtime.describe')
+        if 'session-indexing-v1' not in description.get('capabilities', []):
+            return False
+        result = await client.rpc('client.capabilities', indexing_status=True)
+        return result.get('indexing_status') is True
+    except GatewayRPCError as exc:
+        if exc.code == -32601 or (exc.code == 4001 and str(exc) == 'invalid_params'):
+            return False
+        raise
+
+
 class IndexingCache:
     def __init__(self, session):
         self.session = session

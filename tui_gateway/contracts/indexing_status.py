@@ -12,4 +12,5 @@ class IndexingStatusPayload(Payload):
 
 
 event('session.indexing', IndexingStatusPayload,
-      doc='Cached resident context-engine snapshot; producer lifetime, not turn lifetime. Null retires it.')
+      doc='Opt-in unsequenced resident context-engine snapshot; never ordinary replay or observers. '
+          'Producer lifetime, not turn lifetime. Null retires it.')
