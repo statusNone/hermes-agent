@@ -2254,6 +2254,8 @@ display:
   show_commentary: true   # Codex models: deliver commentary-channel progress narration as visible mid-turn updates
   skin: default           # Built-in or custom CLI skin (see user-guide/features/skins)
   personality: ""         # Legacy cosmetic field still surfaced in some summaries
+  composer_placeholder: null  # Classic CLI idle: null = session example; "" = blank; string = custom
+  show_profile_in_prompt: true  # Classic CLI: false hides the profile prefix, not state icons
   compact: false          # Compact output mode (less whitespace)
   cli_multiline_shortcuts: true  # CLI: Ctrl+J, \ + Enter, and supported Shift+Enter insert newlines (false = legacy c-j submit fallback)
   resume_display: full    # full (show previous messages on resume) | minimal (one-liner only)
@@ -2282,6 +2284,37 @@ display:
   cli_rebuild_scrollback_on_redraw: false  # Classic CLI: also wipe terminal scrollback (CSI 3J) on /redraw / Ctrl+L / width-change resize recovery. Enable when a terminal/tmux stack stamps stale prompt chrome into scrollback on maximize/restore.
   language: en            # UI language for static messages (approval prompts, some gateway replies). en | zh | zh-hant | ja | de | es | fr | tr | uk | af | ko | it | ga | pt | ru | hu
 ```
+
+### Blank classic CLI composer
+
+In the prompt_toolkit CLI (both `modern` and `classic` layouts), set
+`display.composer_placeholder` to an empty string to hide idle examples, and
+`display.show_profile_in_prompt` to `false` to hide the profile-name prefix.
+Busy, approval, password/secret, clarification and parked-draft cues remain visible.
+These settings do not change the Ink TUI, messaging behavior or agent requests.
+Restart only the interactive CLI session to load changed settings; no gateway restart is needed.
+
+The prompt glyph uses the existing skin setting `branding.prompt_symbol`.
+For a plain `>` on a profile using the default skin, create
+`<profile-home>/skins/blank-prompt.yaml`:
+
+```yaml
+name: blank-prompt
+branding:
+  prompt_symbol: ">"
+```
+
+Then select it and set the two presentation options for that profile:
+
+```bash
+hermes --profile YOUR_PROFILE config set display.skin blank-prompt
+hermes --profile YOUR_PROFILE config set display.composer_placeholder ''
+hermes --profile YOUR_PROFILE config set display.show_profile_in_prompt false
+```
+
+If using a custom skin, keep its existing palette/branding and change only its
+`branding.prompt_symbol` instead. Unset the two display options to restore the
+session example and profile prefix; select the previous skin to restore its glyph.
 
 ### Per-turn summary and spinner token flow
 
