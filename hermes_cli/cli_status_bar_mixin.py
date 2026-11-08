@@ -1014,6 +1014,16 @@ class CLIStatusBarMixin:
         self._status_bar_field_set_cache = result
         return result
 
+    def _compact_status_bar(self) -> bool:
+        """Opt-in presentation only; field visibility remains independently configured."""
+        from cli import CLI_CONFIG
+        from utils import is_truthy_value
+
+        config = getattr(self, "config", CLI_CONFIG)
+        display = config.get("display", {}) if isinstance(config, dict) else {}
+        status = display.get("status_bar", {}) if isinstance(display, dict) else {}
+        return isinstance(status, dict) and is_truthy_value(status.get("compact"), default=False)
+
     def _status_bar_segments(
         self, snapshot, width: int, field_set, yolo_active: bool, *, styled: bool) -> list:
         """Ordered status-bar segments for one width tier (<52 / <76 / wide), each a list of
@@ -1028,6 +1038,7 @@ class CLIStatusBarMixin:
         contribution = handle.snapshot() if handle is not None else None
         rolling = contribution.rolling_context if contribution is not None else None
         rolling_display = contribution.rolling_display if contribution is not None else None
+        compact = self._compact_status_bar()
         if rolling is not None:
             # Display-only replacement; never change the host's provider accounting.
             snapshot = dict(snapshot, context_tokens=rolling.current, context_length=rolling.high,
@@ -1049,12 +1060,14 @@ class CLIStatusBarMixin:
                 add(name, style(count) if callable(style) else style, f"{glyph} {count}")
 
         if _ok("model"):
-            if styled:
+            if compact:
+                segs.append([(_STRONG, model_short)])
+            elif styled:
                 segs.append([(_SB, " ☤ "), (_STRONG, model_short)])
             else:
                 segs.append([("", f"☤ {model_short}")])
         narrow, wide = width < 52, width >= 76
-        if narrow:
+        if narrow and not (compact and rolling is not None):
             # Narrow bars put duration ahead of the goal segment; the other tiers reverse it.
             add("duration", _DIM, duration_label)
         else:
@@ -1062,7 +1075,7 @@ class CLIStatusBarMixin:
             mark = "~" if snapshot.get("context_estimated") else ""
             percent_label = f"{mark}{percent}%" if percent is not None else "--"
             if rolling is not None:
-                high_label = "" if wide and _ok("context_detail") else " high"
+                high_label = " of high" if compact else ("" if wide and _ok("context_detail") else " high")
                 percent_label += f"{high_label} · low {format_token_count_compact(rolling.low)}"
             if wide and _ok("context_detail"):
                 if snapshot["context_length"]:
@@ -1099,7 +1112,7 @@ class CLIStatusBarMixin:
                 # never substitute the host's broader compression counter.
                 # Keep this replacement compact enough that the independent
                 # indexing segment retains the stock footer's spare-cell budget.
-                boundary = f" @{rolling_display.recent_window_start}" if wide else ""
+                boundary = f" @{rolling_display.recent_window_start}" if wide and not compact else ""
                 segs.append([(_DIM, f"⋈ {rolling_display.committed_count}{boundary}")])
             add_count("bg_tasks", "active_background_tasks", "▶")
             add_count("bg_processes", "active_background_processes", "⚙")
@@ -1147,7 +1160,7 @@ class CLIStatusBarMixin:
             if width < 52:
                 text = f"{parts[0]} │ " + " · ".join(parts[1:]) if battery_label else " · ".join(parts)
             else:
-                text = (" · " if width < 76 else " │ ").join(parts)
+                text = (" · " if width < 76 or self._compact_status_bar() else " │ ").join(parts)
             from hermes_cli.cli_indexing_status import append_indexing_status
             placed = self._status_title_badge(session_title, width)
             budget = placed[1] if placed else width
@@ -1178,7 +1191,7 @@ class CLIStatusBarMixin:
             session_title = (snapshot.get("session_title") or "") if _ok("title") else ""
             segs = self._status_bar_segments(
                 snapshot, width, field_set, self._is_session_yolo_active(), styled=True)
-            sep = " · " if width < 76 else " │ "
+            sep = " · " if width < 76 or self._compact_status_bar() else " │ "
             frags: list = []
             for seg in segs or [[(_SB, " ☤ "), (_STRONG, snapshot["model_short"])]]:
                 if frags:

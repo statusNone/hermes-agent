@@ -2436,6 +2436,33 @@ Notes:
 - The same key also filters the **Ink TUI** status rule (`hermes tui`), where `cache_hit`, `latency`, and `tps` render as width-budgeted tail segments (◎ / ◷ / ↑) on terminals ≥96/104/110 columns respectively.
 - Display-only: no effect on prompt caching or request payloads. Changes take effect on the next session start.
 
+### Compact classic-CLI status bar
+
+`display.status_bar.compact: true` opts into a bare model label and dot separators.
+For an attached rolling-context contribution, it omits the persistent boundary
+datetime (retaining the committed `⋈` count) and labels the uncapped percentage
+explicitly **of high**, including the narrow percentage-only tiers. The gauge
+still saturates at 100%; the numeric label may exceed 100%. Producer values,
+policy thresholds and detailed-status commands are unchanged. Default: `false`.
+This is a classic Python CLI renderer option, not an Ink TUI setting.
+
+Reuse field selection to remove routine telemetry without hiding mode warnings:
+
+```yaml
+display:
+  status_bar:
+    compact: true
+    fields: [model, context_detail, context_pct, compressions, bg_tasks, bg_processes, bg_subagents, goal, focus, yolo, stash]
+```
+
+Background counters appear only while nonzero. This list omits cache, latency,
+throughput, age, timing, title and branch; an explicit list also suppresses the
+modern-layout working-directory segment. Indexing remains an independent optional
+segment, shown whole only when spare cells permit (and never below 76 columns).
+At narrower widths the existing context detail/gauge tiers still apply. Without
+a rolling contribution, host usage/unknown fallbacks remain in use. Keep `yolo`
+and `stash` in any compact field list; composer/modal cues are independent.
+
 ### Runtime-metadata footer (gateway only)
 
 When `display.runtime_footer.enabled: true`, Hermes appends a small runtime-context footer to the **final** message of each gateway turn. The current footer can show the model, context-window percentage, and current working directory. Off by default; opt in per-gateway if your team wants every reply to include this provenance.

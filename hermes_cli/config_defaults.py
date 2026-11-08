@@ -969,6 +969,9 @@ DEFAULT_CONFIG = {
         # context_detail/prompt_elapsed/idle_since.
         "status_bar": {
             "fields": [],
+            # Compact labels/separators; rolling count without boundary datetime.
+            # Explicit % of high remains visible in compact rolling width tiers.
+            "compact": False,
         },
         "copy_shortcut": "auto",  # "auto" (platform default) | ctrl_c | ctrl_shift_c | disabled
         # Petdex animated mascot (github.com/crafter-station/petdex): cosmetic sprite across
