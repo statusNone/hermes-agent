@@ -37,6 +37,7 @@ def renderer_facade():
     previous = sys.modules.get("cli")
     facade = ModuleType("cli")
     facade.format_token_count_compact = format_token_count_compact
+    facade.CLI_CONFIG = {}
     sys.modules["cli"] = facade
     try:
         yield

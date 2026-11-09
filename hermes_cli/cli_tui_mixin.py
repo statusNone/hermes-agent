@@ -230,10 +230,8 @@ class CLITuiMixin:
         return panel.close()
 
     def _get_tui_prompt_symbols(self) -> tuple[str, str]:
-        """Return ``(normal_prompt, state_suffix)`` for the active skin.
-
-        ``state_suffix`` is what special states (sudo/secret/approval/agent) render after their
-        leading icon. A non-default profile name is prepended (``coder ❯``).
+        """Return the skin prompt and suffix used after special-state icons.
+        Non-default profiles prepend their name unless display.show_profile_in_prompt is false.
         """
         try:
             from hermes_cli.skin_engine import get_active_prompt_symbol
@@ -244,7 +242,7 @@ class CLITuiMixin:
         try:
             from hermes_cli.profiles import get_active_profile_name
             profile = get_active_profile_name()
-            if profile not in {"default", "custom"}:
+            if profile not in {"default", "custom"} and getattr(self, "config", {}).get("display", {}).get("show_profile_in_prompt", True):
                 symbol = f"{profile} {symbol}"
         except Exception:
             pass
@@ -802,8 +800,10 @@ class CLITuiMixin:
             _stash_hint = ""
         if _stash_hint:
             return _stash_hint
-        # Idle + empty composer: a task-oriented example chosen once per session
-        # (self._composer_placeholder) so it stays stable while being read, not flickering.
+        # Override only idle examples, never the state or parked-draft cues above.
+        placeholder = getattr(self, "config", {}).get("display", {}).get("composer_placeholder")
+        if isinstance(placeholder, str):
+            return placeholder
         return getattr(self, "_composer_placeholder", "") or ""
 
     def _get_stash_panel_display_fragments(self):

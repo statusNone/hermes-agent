@@ -2254,6 +2254,8 @@ display:
   show_commentary: true   # Codex models: deliver commentary-channel progress narration as visible mid-turn updates
   skin: default           # Built-in or custom CLI skin (see user-guide/features/skins)
   personality: ""         # Legacy cosmetic field still surfaced in some summaries
+  composer_placeholder: null  # Classic CLI idle: null = session example; "" = blank; string = custom
+  show_profile_in_prompt: true  # Classic CLI: false hides the profile prefix, not state icons
   compact: false          # Compact output mode (less whitespace)
   cli_multiline_shortcuts: true  # CLI: Ctrl+J, \ + Enter, and supported Shift+Enter insert newlines (false = legacy c-j submit fallback)
   resume_display: full    # full (show previous messages on resume) | minimal (one-liner only)
@@ -2282,6 +2284,37 @@ display:
   cli_rebuild_scrollback_on_redraw: false  # Classic CLI: also wipe terminal scrollback (CSI 3J) on /redraw / Ctrl+L / width-change resize recovery. Enable when a terminal/tmux stack stamps stale prompt chrome into scrollback on maximize/restore.
   language: en            # UI language for static messages (approval prompts, some gateway replies). en | zh | zh-hant | ja | de | es | fr | tr | uk | af | ko | it | ga | pt | ru | hu
 ```
+
+### Blank classic CLI composer
+
+In the prompt_toolkit CLI (both `modern` and `classic` layouts), set
+`display.composer_placeholder` to an empty string to hide idle examples, and
+`display.show_profile_in_prompt` to `false` to hide the profile-name prefix.
+Busy, approval, password/secret, clarification and parked-draft cues remain visible.
+These settings do not change the Ink TUI, messaging behavior or agent requests.
+Restart only the interactive CLI session to load changed settings; no gateway restart is needed.
+
+The prompt glyph uses the existing skin setting `branding.prompt_symbol`.
+For a plain `>` on a profile using the default skin, create
+`<profile-home>/skins/blank-prompt.yaml`:
+
+```yaml
+name: blank-prompt
+branding:
+  prompt_symbol: ">"
+```
+
+Then select it and set the two presentation options for that profile:
+
+```bash
+hermes --profile YOUR_PROFILE config set display.skin blank-prompt
+hermes --profile YOUR_PROFILE config set display.composer_placeholder ''
+hermes --profile YOUR_PROFILE config set display.show_profile_in_prompt false
+```
+
+If using a custom skin, keep its existing palette/branding and change only its
+`branding.prompt_symbol` instead. Unset the two display options to restore the
+session example and profile prefix; select the previous skin to restore its glyph.
 
 ### Per-turn summary and spinner token flow
 
@@ -2402,6 +2435,33 @@ Notes:
 - `battery` and `title` visibility here compose with their own toggles (`/battery`, `/title`) — both must be on for the segment to show.
 - The same key also filters the **Ink TUI** status rule (`hermes tui`), where `cache_hit`, `latency`, and `tps` render as width-budgeted tail segments (◎ / ◷ / ↑) on terminals ≥96/104/110 columns respectively.
 - Display-only: no effect on prompt caching or request payloads. Changes take effect on the next session start.
+
+### Compact classic-CLI status bar
+
+`display.status_bar.compact: true` opts into a bare model label and dot separators.
+For an attached rolling-context contribution, it omits the persistent boundary
+datetime (retaining the committed `⋈` count) and labels the uncapped percentage
+explicitly **of high**, including the narrow percentage-only tiers. The gauge
+still saturates at 100%; the numeric label may exceed 100%. Producer values,
+policy thresholds and detailed-status commands are unchanged. Default: `false`.
+This is a classic Python CLI renderer option, not an Ink TUI setting.
+
+Reuse field selection to remove routine telemetry without hiding mode warnings:
+
+```yaml
+display:
+  status_bar:
+    compact: true
+    fields: [model, context_detail, context_pct, compressions, bg_tasks, bg_processes, bg_subagents, goal, focus, yolo, stash]
+```
+
+Background counters appear only while nonzero. This list omits cache, latency,
+throughput, age, timing, title and branch; an explicit list also suppresses the
+modern-layout working-directory segment. Indexing remains an independent optional
+segment, shown whole only when spare cells permit (and never below 76 columns).
+At narrower widths the existing context detail/gauge tiers still apply. Without
+a rolling contribution, host usage/unknown fallbacks remain in use. Keep `yolo`
+and `stash` in any compact field list; composer/modal cues are independent.
 
 ### Runtime-metadata footer (gateway only)
 
