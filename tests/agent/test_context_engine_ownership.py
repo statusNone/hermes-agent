@@ -4,12 +4,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from agent.agent_init import _host_automatic_compression_enabled
 from agent.agent_init_compression_notice import _emit_compression_summary
 
 
 def _actual_hysteresis_engine(monkeypatch):
     """Construct the candidate plugin engine without its external reader transport."""
+    pytest.importorskip("hysteresis_context")
     import hysteresis_context.engine as hysteresis_engine
 
     # The command supplies the isolated candidate plugin path; reject a differently
