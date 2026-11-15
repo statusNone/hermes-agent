@@ -153,6 +153,16 @@ class ContextEngine(ABC):
         """
         return
 
+    def on_turn_result(self, result: dict[str, Any], *, persisted_turn: dict | None = None, **kwargs: Any) -> None:
+        """Observe a returned turn envelope after native settlement and persistence.
+
+        The host supplies a detached, allowlisted outcome projection rather than the
+        transcript or response body. ``persisted_turn`` is the existing committed-row
+        receipt when that caller can prove it; ``None`` means no receipt, not failure.
+        This is best-effort observation only: return values and exceptions are ignored.
+        """
+        return
+
     def should_compress_preflight(self, messages: list[dict[str, Any]]) -> bool:
         """Cheap rough check before the API call (no real token count yet); default skips."""
         return False

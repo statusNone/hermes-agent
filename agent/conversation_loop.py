@@ -7,6 +7,7 @@ retries, fallbacks, compression, post-turn hooks). Symbols that callers patch on
 
 from __future__ import annotations
 
+import copy
 import inspect
 import json
 import logging
@@ -65,6 +66,69 @@ from tools.skill_provenance import set_current_write_origin
 from utils import base_url_host_matches
 
 logger = logging.getLogger(__name__)
+
+
+def _turn_result_observer(agent):
+    """Return an opted-in result observer without waking default engines."""
+    engine = getattr(agent, "context_compressor", None)
+    callback = getattr(engine, "on_turn_result", None)
+    if not callable(callback):
+        return None
+    from agent.context_engine import ContextEngine
+    if getattr(type(engine), "on_turn_result", None) is ContextEngine.on_turn_result:
+        return None
+    return callback
+
+
+def _safe_cleanup_categories(value):
+    """Keep host cleanup step names, never exception/provider text, in an observer view."""
+    if not isinstance(value, list):
+        return None
+    categories = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        category = item.partition(":")[0].strip()
+        if category and re.fullmatch(r"[a-zA-Z0-9_.-]{1,80}", category):
+            categories.append(category)
+    return categories
+
+
+def _turn_result_projection(result):
+    """Detached, non-content result fields safe for an optional ContextEngine observer."""
+    if not isinstance(result, dict):
+        return {}
+    allowed = ("session_id", "turn_id", "completed", "failed", "interrupted", "partial",
+               "turn_exit_reason", "failure_reason", "failure_retryable", "api_calls", "user_intervened")
+    projected = {key: copy.deepcopy(result[key]) for key in allowed if key in result}
+    categories = _safe_cleanup_categories(result.get("cleanup_errors"))
+    if categories is not None:
+        projected["cleanup_errors"] = categories
+    return projected
+
+
+def _local_persisted_turn_receipt(agent, history, compression_count, result):
+    """Reuse the shared receipt classifier for the exported local-agent boundary."""
+    from agent.persisted_turn_receipt import persisted_turn_receipt
+    if not isinstance(result, dict):
+        return None
+    status = ("interrupted" if result.get("interrupted") else
+              "error" if result.get("failed") or result.get("error") else "complete")
+    return persisted_turn_receipt(
+        result.get("messages"), getattr(agent, "_persist_user_message_idx", None), history,
+        result.get("final_response"), status,
+        compression_unchanged=type(compression_count) is int and compression_count == getattr(
+            getattr(agent, "context_compressor", None), "compression_count", None),
+        prefix_row_matches=lambda before, after: before is after,
+    )
+
+
+def _notify_turn_result_observer(callback, result, persisted_turn):
+    try:
+        callback(_turn_result_projection(result), persisted_turn=copy.deepcopy(persisted_turn))
+    except Exception:
+        logger.debug("context-engine turn-result observer failed", exc_info=True)
+
 
 # Must mirror _STALE_TOOL_CALL_MARKER_RE in hermes_state.py; kept local so importing
 # hermes_state (module-level DEFAULT_DB_PATH) is not forced at load time.
@@ -1830,6 +1894,12 @@ def run_conversation(
     from agent.voice_turn_route import end_voice_turn_route
     from tools.vision_tools_history_budget import native_turn_images
 
+    # The default ContextEngine has no result observer, so avoid even receipt work on
+    # ordinary turns. Snapshot the exact caller history before the loop can re-anchor it.
+    observer = _turn_result_observer(agent)
+    observer_history = list(conversation_history or []) if observer else None
+    observer_compressions = (getattr(getattr(agent, "context_compressor", None), "compression_count", None)
+                             if observer else None)
     # Steer / redirect / interrupt set this mid-turn; the result reports whether the turn ran untouched.
     agent._turn_user_intervened = False
     # Images attached natively to this user turn stay visible to vision_analyze for the turn, so
@@ -1860,6 +1930,13 @@ def run_conversation(
     if isinstance(result, dict):
         result["user_intervened"] = bool(getattr(agent, "_turn_user_intervened", False))
     _close_durable_failed_turn(agent, result)
+    if observer:
+        # This deliberately follows held-final settlement, boundary export, and failed-turn
+        # closure. A hard exception with no result envelope has no observation callback.
+        _notify_turn_result_observer(
+            observer, result,
+            _local_persisted_turn_receipt(agent, observer_history, observer_compressions, result),
+        )
     return result
 
 
