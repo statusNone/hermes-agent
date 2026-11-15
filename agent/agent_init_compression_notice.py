@@ -79,7 +79,7 @@ def _emit_compression_summary(agent, cs):
         # re-notifies once. The config display gate (compression.codex_gpt55_autoraise_notice) still
         # suppresses the banner entirely without disabling the threshold autoraise. See #54432.
         bool(_autoraise)
-        and cs.enabled
+        and agent.compression_enabled
         and cs.autoraise_notice_enabled
         and not _codex_gpt55_autoraise_notice_seen(_autoraise)
     ):
@@ -89,7 +89,7 @@ def _emit_compression_summary(agent, cs):
 
     if not agent.quiet_mode:
         _cc = agent.context_compressor
-        if cs.enabled:
+        if agent.compression_enabled:
             # The active engine's own threshold — a plugin's differs from cs.threshold.
             _pct = getattr(_cc, "threshold_percent", cs.threshold)
             _cap = getattr(_cc, "threshold_tokens_cap", None)

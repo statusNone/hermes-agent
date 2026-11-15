@@ -48,6 +48,11 @@ def automatic_compaction_status_message(engine: Any, *, phase: str, default_mess
 class ContextEngine(ABC):
     """Base class all context engines must implement."""
 
+    # Engines that select and retain their own request context opt out of the
+    # host's automatic summary-compression policy.  Missing on older plugins
+    # deliberately means False for backwards compatibility.
+    manages_own_context: bool = False
+
     @property
     @abstractmethod
     def name(self) -> str:
