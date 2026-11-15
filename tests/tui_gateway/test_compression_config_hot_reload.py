@@ -293,6 +293,15 @@ def test_removing_enabled_restores_true(monkeypatch):
     assert session["agent"].compression_enabled is True
 
 
+def test_live_refresh_keeps_host_compression_disabled_for_owning_engine(monkeypatch):
+    session, compressor = _neutral_session()
+    compressor.manages_own_context = True
+
+    _sync_with_cfg(monkeypatch, session, {"compression": {"enabled": True}})
+
+    assert session["agent"].compression_enabled is False
+
+
 def test_removing_codex_native_compaction_restores_false(monkeypatch):
     session, _ = _neutral_session()
     session["agent"].codex_responses_native_compaction = True

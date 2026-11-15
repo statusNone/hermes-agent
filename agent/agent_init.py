@@ -1882,6 +1882,15 @@ def _compressor_max_tokens(agent):
     return None
 
 
+def _host_automatic_compression_enabled(configured: bool, engine) -> bool:
+    """Whether the host may automatically summarize this engine's context.
+
+    A context engine can own request selection/retention itself.  Older plugins
+    do not declare the capability and retain the configured host behavior.
+    """
+    return bool(configured) and not bool(getattr(engine, "manages_own_context", False))
+
+
 def _build_context_engine(agent, _agent_cfg, cs, _custom_providers, _effective_context_length, session_db):
     agent._context_engine_required = (_agent_cfg.get("context", {}) or {}).get("required", False) is True
 
@@ -1930,7 +1939,7 @@ def _build_context_engine(agent, _agent_cfg, cs, _custom_providers, _effective_c
     if callable(_bind_session_state):
         with suppress(Exception):
             _bind_session_state(session_db=session_db, session_id=agent.session_id)
-    agent.compression_enabled = cs.enabled
+    agent.compression_enabled = _host_automatic_compression_enabled(cs.enabled, agent.context_compressor)
     agent.compression_in_place = cs.in_place
     _cc = agent.context_compressor
     # Micro-compaction has no pre-compress checkpoint hook; suppress it while the gate is
